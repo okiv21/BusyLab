@@ -151,12 +151,43 @@ class GroqProvider:
         raise ProviderError(f"Groq request failed: {last_error}")
 
 
+def load_dotenv(start: str | os.PathLike[str] | None = None) -> bool:
+    """Read a ``.env`` file into the environment, if one exists.
+
+    Written by hand rather than pulled in as a dependency: it is a dozen lines,
+    and the engine's dependency footprint is a deployment constraint (spec 9).
+
+    Real environment variables always win, so a value exported in the shell or
+    set by the host is never silently overridden by a stale file. Searches the
+    working directory and its parents so it works from anywhere in the repo.
+    """
+    from pathlib import Path
+
+    here = Path(start or os.getcwd()).resolve()
+    for directory in (here, *here.parents):
+        candidate = directory / ".env"
+        if not candidate.is_file():
+            continue
+        for line in candidate.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip("'\"")
+            if key and key not in os.environ:
+                os.environ[key] = value
+        return True
+    return False
+
+
 def from_env(*, model: str | None = None) -> Provider:
     """Build a provider from the environment.
 
     Returns :class:`NullProvider` when nothing is configured, so importing this
     module never makes the engine depend on a network call.
     """
+    load_dotenv()
     choice = os.environ.get("BUSYLAB_LLM_PROVIDER", "auto").lower()
     key = os.environ.get("GROQ_API_KEY", "")
     chosen_model = model or os.environ.get("BUSYLAB_LLM_MODEL") or DEFAULT_NARRATION_MODEL

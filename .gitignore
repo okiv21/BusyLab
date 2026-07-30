@@ -12,3 +12,4 @@ samples/
 *.db
 storage/
 live_storage/
+.env

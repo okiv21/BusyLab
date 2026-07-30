@@ -11,6 +11,7 @@ is a bug regardless of how well it reads.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 
 import pytest
@@ -92,6 +93,34 @@ def test_missing_api_key_yields_the_null_provider(monkeypatch) -> None:
 def test_provider_can_be_turned_off_explicitly(monkeypatch) -> None:
     monkeypatch.setenv("GROQ_API_KEY", "sk-whatever")
     monkeypatch.setenv("BUSYLAB_LLM_PROVIDER", "none")
+    assert not from_env().available()
+
+
+def test_dotenv_supplies_the_key(tmp_path, monkeypatch) -> None:
+    from busylab.narration.provider import load_dotenv
+
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    (tmp_path / ".env").write_text('GROQ_API_KEY="from-file"\n# a comment\n')
+
+    load_dotenv(tmp_path)
+    assert os.environ["GROQ_API_KEY"] == "from-file"
+
+
+def test_a_real_environment_variable_beats_the_file(tmp_path, monkeypatch) -> None:
+    """A stale file must never override what the host actually set."""
+    from busylab.narration.provider import load_dotenv
+
+    monkeypatch.setenv("GROQ_API_KEY", "from-shell")
+    (tmp_path / ".env").write_text("GROQ_API_KEY=from-file\n")
+
+    load_dotenv(tmp_path)
+    assert os.environ["GROQ_API_KEY"] == "from-shell"
+
+
+def test_an_empty_key_is_treated_as_no_key(tmp_path, monkeypatch) -> None:
+    """A .env copied from the example but not filled in must not half-work."""
+    monkeypatch.setenv("GROQ_API_KEY", "")
+    monkeypatch.delenv("BUSYLAB_LLM_PROVIDER", raising=False)
     assert not from_env().available()
 
 
