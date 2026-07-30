@@ -184,7 +184,7 @@ def write_monthly_workbook(path: str | Path, months: int = 6, seed: int = 9) -> 
     return path
 
 
-def planted_business(seed: int = 21) -> pd.DataFrame:
+def planted_business(seed: int = 21, days: int = 540) -> pd.DataFrame:
     """A business with deliberately planted, known truths.
 
     Every effect below is put there on purpose so the analysis engine can be
@@ -211,7 +211,7 @@ def planted_business(seed: int = 21) -> pd.DataFrame:
     weights = [0.40, 0.22, 0.16, 0.14, 0.08]
 
     start = pd.Timestamp("2024-01-01")
-    for day in range(540):
+    for day in range(days):
         when = start + pd.Timedelta(days=day)
         month_index = day // 30
 

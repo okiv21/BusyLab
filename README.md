@@ -17,7 +17,7 @@ around this package and never the other way round.
 | 2. Core analysis engine | **done** (Pillar 0) |
 | 3. Narration and routing | **done** |
 | 4. Story-led UI | next |
-| 5. Background jobs | not started |
+| 5. Background jobs | **done** (API, worker, job table) |
 | 6. Mapping memory, Sheets, folder watch, quality gate | fingerprint done, rest not started |
 | 7-11 | not started |
 
@@ -165,6 +165,43 @@ they do not. A route it invents is discarded, keyword matching covers the
 no-model case, and an unmatched question is refused with suggestions rather
 than answered with a guess. Chips are only offered when the engine can actually
 answer them.
+
+## The API
+
+A separate `api/` package that imports `busylab`. The dependency only ever
+points that way, which is what keeps the engine shippable on its own — there is
+a test that asserts importing the engine never pulls in FastAPI.
+
+```bash
+./.venv/Scripts/python.exe -m uvicorn api.main:app --reload --port 8000
+# http://localhost:8000/docs
+```
+
+Analysis does not run inside the request. An upload returns a job id
+immediately, a worker processes it off the request cycle, and the frontend
+polls — spec 9 calls this architectural rather than cosmetic, and nothing
+proactive can exist without it.
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /uploads` | Accept a spreadsheet, queue detection, return a job id |
+| `GET /jobs/{id}` | Poll status and step; carries the result when done |
+| `GET /datasets/{id}/columns` | What was understood, what still needs asking |
+| `POST /datasets/{id}/columns` | Submit answers, queue the analysis |
+| `GET /datasets/{id}/story` | The ranked narrative, each finding with its chart |
+| `POST /datasets/{id}/ask` | Route a question to an already-computed analysis |
+| `DELETE /datasets/{id}` | Remove an upload and its raw file |
+
+Jobs and datasets live in SQLite locally. Spec 8 calls for a Postgres jobs
+table with polling because it is one fewer service to run, and the interface
+here is deliberately the small intersection of what SQLite and Postgres both do
+well, so moving to Supabase is a driver swap rather than a redesign.
+`claim()` is a locked read-then-conditional-update, which becomes
+`SELECT … FOR UPDATE SKIP LOCKED` in Postgres.
+
+Mapping memory (spec 4.1) is wired in: a confirmed set of role assignments is
+stored against the schema fingerprint, so re-uploading the same shape of file
+runs silently instead of asking the same questions again.
 
 ## The mess it absorbs
 

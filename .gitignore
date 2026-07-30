@@ -9,3 +9,6 @@ build/
 dist/
 .DS_Store
 samples/
+*.db
+storage/
+live_storage/
