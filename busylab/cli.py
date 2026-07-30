@@ -22,7 +22,13 @@ def _bar(label: str) -> str:
     return f"\n{label}\n{'-' * len(label)}"
 
 
-def run(path: Path, *, verbose: bool = False, analyse_too: bool = True) -> int:
+def run(
+    path: Path,
+    *,
+    verbose: bool = False,
+    analyse_too: bool = True,
+    question: str | None = None,
+) -> int:
     try:
         frame, report = loading.load(path)
     except (ValueError, FileNotFoundError) as exc:
@@ -86,20 +92,50 @@ def run(path: Path, *, verbose: bool = False, analyse_too: bool = True) -> int:
         return 0
 
     from .analysis import analyse
+    from .narration import from_env, narrate, route_question, suggest_chips
+    from .narration.routing import answer_from_findings
 
     story = analyse(frame, result)
+    provider = from_env()
+
     print(_bar("Your story"))
+    if provider.available():
+        print(f"  (narrated by {provider.name})\n")
     if not story.findings:
         print("  nothing stood out in this data")
+
+    cache: dict[str, str] = {}
     for i, finding in enumerate(story.findings, start=1):
         flag = {"urgent": "!!", "watch": "! ", "good": "+ ", "neutral": "  "}[
             finding.severity.value
         ]
-        print(f"\n  {i}. {flag} {finding.summary}")
+        sentence = narrate(finding, provider, cache=cache)
+        print(f"\n  {i}. {flag} {sentence.text}")
         print(
             f"        {finding.type.value} · {finding.chart.value}"
-            f" · {finding.evidence.strength}"
+            f" · {finding.evidence.strength} · via {sentence.source}"
         )
+
+    columns = set(story.frame.data.columns) if story.frame else set()
+    chips = suggest_chips(story.findings, columns)
+    if chips:
+        print(_bar("Keep pulling the thread"))
+        for chip in chips:
+            print(f"  · {chip.label}")
+
+    if question:
+        decision = route_question(question, story.findings, provider, columns=columns)
+        print(_bar(f"You asked: {question}"))
+        if not decision.answerable:
+            print(f"  {decision.refusal}")
+        else:
+            answer = answer_from_findings(decision, story.findings)
+            print(f"  routed to '{decision.route.label}' via {decision.source}")
+            if answer is not None:
+                print(f"  {narrate(answer, provider, cache=cache).text}")
+            else:
+                print("  That analysis has not run on this data yet.")
+
     for note in story.errors:
         print(f"\n  error: {note}")
     return 0
@@ -118,8 +154,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="stop after detection, do not run the analysis",
     )
+    parser.add_argument(
+        "-q",
+        "--ask",
+        metavar="QUESTION",
+        help='ask a question about the findings, e.g. "why did revenue drop?"',
+    )
     args = parser.parse_args(argv)
-    return run(args.path, verbose=args.verbose, analyse_too=not args.columns_only)
+    return run(
+        args.path,
+        verbose=args.verbose,
+        analyse_too=not args.columns_only,
+        question=args.ask,
+    )
 
 
 if __name__ == "__main__":

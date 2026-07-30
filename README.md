@@ -15,8 +15,8 @@ around this package and never the other way round.
 |---|---|
 | 1. Detection engine | **done** |
 | 2. Core analysis engine | **done** (Pillar 0) |
-| 3. Narration and routing | next |
-| 4. Story-led UI | not started |
+| 3. Narration and routing | **done** |
+| 4. Story-led UI | next |
 | 5. Background jobs | not started |
 | 6. Mapping memory, Sheets, folder watch, quality gate | fingerprint done, rest not started |
 | 7-11 | not started |
@@ -121,6 +121,51 @@ Implemented (Pillar 0, the non-obvious layer):
   test suite fails on a violation. Directive AI carries liability; illuminating
   AI is trusted.
 
+## Narration and routing
+
+The model writes sentences and picks which analysis answers a question. It
+never computes, never decides and never produces a number (spec 2). Everything
+degrades cleanly to deterministic behaviour, so **BusyLab is fully usable with
+no API key** — the numbers and findings are identical, only the prose is
+plainer.
+
+```bash
+# Optional. Without it, the engine's own wording is used.
+export GROQ_API_KEY=...            # free tier
+export BUSYLAB_LLM_PROVIDER=none   # or force it off entirely
+
+./.venv/Scripts/python.exe -m busylab samples/fern_and_flame.xlsx \
+    --ask "why did revenue drop, was it online?"
+```
+
+Model choice: **Groq free tier**, `llama-3.3-70b-versatile` for narration
+(better prose, and it is cached so volume stays low) and
+`llama-3.1-8b-instant` for routing (classification in an interactive path, so
+latency wins). The endpoint is OpenAI-compatible and called with `urllib` from
+the standard library, so swapping providers is configuration and the engine
+gains no dependencies. Groq's binding free-tier limit is tokens per minute, so
+narration sends one small cached call per finding rather than one large batch.
+
+### Two guardrails, both enforced in tests
+
+- **The model may not invent a number.** Every numeric token it writes must
+  correspond to a value in `finding.facts`, allowing for reasonable renderings
+  (`0.18` may be written `18%`, `551500` may be written `551.5k`). A sentence
+  claiming an 23% fall when the facts say 18% is discarded and the engine's own
+  wording is used. A model that computes has broken the one rule the whole
+  architecture rests on.
+- **The model may not give advice.** The same non-directive guard runs over its
+  output as over the engine's own summaries.
+
+### Routing stays on rails
+
+A free-form question is matched to one of twelve named analyses. The model does
+classification, which small fast models do reliably; it never analyses, which
+they do not. A route it invents is discarded, keyword matching covers the
+no-model case, and an unmatched question is refused with suggestions rather
+than answered with a guess. Chips are only offered when the engine can actually
+answer them.
+
 ## The mess it absorbs
 
 `loading.py` repairs structure before detection sees a frame, because real SME
@@ -158,9 +203,14 @@ busylab/
     core.py           Pillar 0 analyses
     segments.py       segmentation and correlation, both FDR-corrected
     engine.py         orchestration and story ranking
-  cli.py              python -m busylab <file>
+  narration/
+    provider.py       pluggable LLM, Groq free tier, null by default
+    narrate.py        facts to English, with the invented-number guard
+    routing.py        question to pre-built analysis, plus follow-up chips
+  cli.py              python -m busylab <file> [--ask "..."]
 tests/
   fixtures.py         messy workbooks, planted truths, flat control
   test_detection.py
   test_analysis.py
+  test_narration.py
 ```
