@@ -1,0 +1,187 @@
+/* Design tokens, lifted from the product's visual identity.
+   Aesthetic rule from spec 7: nice, not plain, not flashy. Cool comes from
+   clarity and polish, not chart exotica. Restraint reads as premium. */
+
+:root {
+  --ink: #211c15;
+  --ink-muted: #6e675c;
+  --ink-light: #8a8378;
+  --ink-faint: #b8b0a2;
+
+  --page: #f3efe9;
+  --card: #fbfaf8;
+  --white: #ffffff;
+  --line: #f0ebe3;
+  --line-strong: #e2dcd2;
+
+  --accent: #e85a32;
+  --accent-dark: #c74722;
+  --accent-tint: #fbe3d8;
+  --accent-wash: #f7ede4;
+  --accent-soft: #fff8f4;
+
+  --good: #1fa97a;
+  --good-dark: #177e5b;
+  --good-wash: #e7f6f0;
+  --good-line: #cbebdd;
+
+  --warn: #e9a23b;
+  --warn-dark: #b06a1e;
+  --warn-wash: #fdf6ec;
+  --warn-line: #f3e3c8;
+
+  --radius-card: 20px;
+  --radius-hero: 22px;
+  --radius-pill: 999px;
+
+  --shadow-card: 0 8px 24px rgba(33, 28, 21, 0.05);
+  --shadow-lift: 0 16px 40px rgba(33, 28, 21, 0.1);
+  --shadow-hero: 0 18px 44px rgba(232, 90, 50, 0.12);
+  --shadow-accent: 0 12px 28px rgba(232, 90, 50, 0.28);
+
+  --font-display: "Sora", system-ui, sans-serif;
+  --font-body: "Albert Sans", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--ink);
+  background: var(--page);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+button {
+  font-family: var(--font-body);
+  cursor: pointer;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--accent-dark);
+}
+
+/* --- shared primitives ------------------------------------------------ */
+
+.shell {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  padding: 44px 28px 72px;
+}
+
+.frame {
+  width: 1100px;
+  max-width: 100%;
+  background: var(--card);
+  border-radius: 26px;
+  box-shadow: 0 28px 70px rgba(33, 28, 21, 0.12), 0 2px 8px rgba(33, 28, 21, 0.05);
+  overflow: hidden;
+  align-self: flex-start;
+}
+
+.btn {
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  font-size: 15.5px;
+  padding: 14px 28px;
+  box-shadow: var(--shadow-accent);
+  transition: background 0.2s ease, transform 0.15s ease;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--accent-dark);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.btn-ghost {
+  border: 1.5px solid var(--line-strong);
+  background: #fff;
+  color: var(--ink);
+  box-shadow: none;
+  font-size: 14.5px;
+  padding: 12px 24px;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: #fff;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.card {
+  background: var(--white);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+
+.pill {
+  border-radius: var(--radius-pill);
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.eyebrow {
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-light);
+}
+
+.muted {
+  color: var(--ink-muted);
+}
+
+/* Recharts strips its own focus outlines; keep keyboard users visible. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

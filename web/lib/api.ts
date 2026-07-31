@@ -1,0 +1,99 @@
+import type { Answer, Columns, Job, Story } from "./types";
+
+const BASE = process.env.NEXT_PUBLIC_API ?? "http://127.0.0.1:8000";
+
+class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}${path}`, init);
+  } catch {
+    throw new ApiError(
+      "Cannot reach BusyLab. Is the API running on port 8000?",
+      0
+    );
+  }
+  if (!response.ok) {
+    let detail = response.statusText;
+    try {
+      const body = await response.json();
+      detail = body.detail ?? detail;
+    } catch {
+      /* the body was not JSON; the status text will do */
+    }
+    throw new ApiError(detail, response.status);
+  }
+  if (response.status === 204) return undefined as T;
+  return response.json();
+}
+
+export { ApiError };
+
+export function uploadFile(file: File) {
+  const body = new FormData();
+  body.append("file", file);
+  return request<{ job_id: string; dataset_id: string; status: string }>(
+    "/uploads",
+    { method: "POST", body }
+  );
+}
+
+export function getJob(id: string) {
+  return request<Job>(`/jobs/${id}`);
+}
+
+export function getColumns(datasetId: string) {
+  return request<Columns>(`/datasets/${datasetId}/columns`);
+}
+
+export function confirmColumns(datasetId: string, roles: Record<string, string>) {
+  return request<{ job_id: string; dataset_id: string }>(
+    `/datasets/${datasetId}/columns`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ roles }),
+    }
+  );
+}
+
+export function getStory(datasetId: string) {
+  return request<Story>(`/datasets/${datasetId}/story`);
+}
+
+export function ask(datasetId: string, question: string) {
+  return request<Answer>(`/datasets/${datasetId}/ask`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+  });
+}
+
+/**
+ * Poll a job to completion.
+ *
+ * Analysis runs off the request cycle, so the UI polls rather than blocks.
+ * `onStep` receives the worker's own progress text, which is why the
+ * analysing screen shows real stages instead of an invented percentage.
+ */
+export async function waitForJob(
+  jobId: string,
+  onStep?: (job: Job) => void,
+  { intervalMs = 700, timeoutMs = 180_000 } = {}
+): Promise<Job> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const job = await getJob(jobId);
+    onStep?.(job);
+    if (job.status === "done" || job.status === "failed") return job;
+    if (Date.now() > deadline) {
+      throw new ApiError("This is taking longer than expected.", 504);
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}

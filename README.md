@@ -16,7 +16,7 @@ around this package and never the other way round.
 | 1. Detection engine | **done** |
 | 2. Core analysis engine | **done** (Pillar 0) |
 | 3. Narration and routing | **done** |
-| 4. Story-led UI | next |
+| 4. Story-led UI | **done** |
 | 5. Background jobs | **done** (API, worker, job table) |
 | 6. Mapping memory, Sheets, folder watch, quality gate | fingerprint done, rest not started |
 | 7-11 | not started |
@@ -165,6 +165,29 @@ they do not. A route it invents is discarded, keyword matching covers the
 no-model case, and an unmatched question is refused with suggestions rather
 than answered with a guess. Chips are only offered when the engine can actually
 answer them.
+
+## The web app
+
+```bash
+cd web && npm install && npm run dev     # http://localhost:3000
+```
+
+Next.js App Router, Recharts for standard shapes, hand-rolled SVG for the
+waterfall and the correlation heatmap, Framer Motion for entrances.
+
+It is a story, not a dashboard (spec 6). There is no chart picker, no axis
+selector and no filter panel anywhere in the app on purpose: the user reads a
+result the engine ranked and the design laid out. Interactivity only ever goes
+*deeper into* findings that already exist — guided chips, a question box that
+routes to a pre-built analysis, and an evidence panel on every card.
+
+The chart is chosen by `finding.chart`, which the engine set. The frontend
+switches on it and decides nothing.
+
+Screens built: landing, upload, column check, analysing, story, drill-down.
+Forecast, customers, goals and alerts are deliberately absent — there is no
+engine behind them yet (build steps 7 to 9), and a screen showing invented
+numbers would undo the point of the whole product.
 
 ## The API
 

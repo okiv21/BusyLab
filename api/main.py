@@ -43,9 +43,18 @@ app = FastAPI(
     description="A thin wrapper around the BusyLab analysis engine.",
 )
 
+#: localhost and 127.0.0.1 are different origins to a browser, and Next.js
+#: will happily serve on either, so both are allowed by default. Getting this
+#: wrong presents as "cannot reach the API" while curl works perfectly.
+DEFAULT_CORS = "http://localhost:3000,http://127.0.0.1:3000"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.environ.get("BUSYLAB_CORS", "http://localhost:3000").split(","),
+    allow_origins=[
+        origin.strip()
+        for origin in os.environ.get("BUSYLAB_CORS", DEFAULT_CORS).split(",")
+        if origin.strip()
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

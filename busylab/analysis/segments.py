@@ -84,7 +84,21 @@ def segmentation(frame: SalesFrame) -> list[Finding]:
         if gap is None:
             continue
 
-        confirmed = result.significant
+        # A group that happens to sell more expensive products will show a
+        # higher average order value without being any different. That is a
+        # composition effect, not a finding, and stating it as one would be
+        # exactly the impressive-looking garbage spec 3.3 warns about.
+        confounded = _product_mix_differs(frame, column)
+
+        confirmed = result.significant and not confounded
+        if confounded and result.significant:
+            findings.append(
+                _mix_confounded_finding(
+                    column, label, ranked, gap, result, top, bottom, len(candidates)
+                )
+            )
+            continue
+
         if confirmed:
             summary = (
                 f"Average order value differs by {label}: {top} runs about "
@@ -140,6 +154,81 @@ def segmentation(frame: SalesFrame) -> list[Finding]:
         )
 
     return findings
+
+
+def _product_mix_differs(frame: SalesFrame, column: str) -> bool:
+    """Do these groups sell noticeably different products?
+
+    If they do, any gap in average order value may simply be the price of what
+    they happen to sell. Chi-square on the group-by-product table answers it
+    cheaply and deterministically.
+    """
+    from scipy import stats as scipy_stats
+
+    table = pd.crosstab(frame.data[column], frame.data[PRODUCT])
+    if table.shape[0] < 2 or table.shape[1] < 2:
+        return False
+    if (table.to_numpy() < 5).mean() > 0.2:
+        return False  # too sparse for the test to mean anything
+    try:
+        _, p, _, _ = scipy_stats.chi2_contingency(table)
+    except ValueError:
+        return False
+    return bool(np.isfinite(p) and p < 0.05)
+
+
+def _mix_confounded_finding(
+    column: str,
+    label: str,
+    ranked: pd.Series,
+    gap: float,
+    result: stats.TestResult,
+    top: str,
+    bottom: str,
+    family_size: int,
+) -> Finding:
+    """Report the gap and name the confound, rather than claiming a difference."""
+    return Finding(
+        id=f"segmentation_{column}",
+        type=FindingType.SEGMENTATION,
+        summary=(
+            f"Average order value differs by {label} — {top} is about "
+            f"{abs(gap) * 100:.0f}% above {bottom} — but these groups also sell "
+            "a different mix of products, so the gap may be what they sell "
+            "rather than a difference between them."
+        ),
+        facts={
+            "dimension": label,
+            "column": column,
+            "levels": int(len(ranked)),
+            "highest": top,
+            "highest_value": float(ranked.iloc[0]),
+            "lowest": bottom,
+            "lowest_value": float(ranked.iloc[-1]),
+            "gap_pct": gap,
+            "confirmed": False,
+            "mix_confounded": True,
+            "means": {str(k): float(v) for k, v in ranked.items()},
+        },
+        evidence=Evidence(
+            method=f"{result.method}, with a product-mix check",
+            p_value=result.p_value,
+            adjusted_p=result.adjusted_p,
+            sample_size=result.sample_size,
+            correction="Benjamini-Hochberg FDR",
+            notes=[
+                f"{family_size} dimensions tested together.",
+                "Product mix differs across these groups (chi-square, p < 0.05), "
+                "so this comparison is not like-for-like.",
+            ],
+        ),
+        severity=Severity.NEUTRAL,
+        importance=0.3,
+        tier=Tier.SEGMENT,
+        chart_data={
+            "groups": [{"label": str(k), "value": float(v)} for k, v in ranked.items()]
+        },
+    )
 
 
 def product_relationships(frame: SalesFrame) -> list[Finding]:

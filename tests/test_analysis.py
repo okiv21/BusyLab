@@ -156,6 +156,30 @@ def test_correction_still_lets_real_findings_through() -> None:
     assert sum(rejected) >= 20
 
 
+def test_a_group_gap_caused_by_product_mix_is_not_claimed() -> None:
+    """A group selling pricier products is not a group that sells better.
+
+    Salesperson is assigned at random in the fixture, so any gap in average
+    order value is composition: whoever happened to sell more Ceramic Diffuser
+    looks better. Reporting that as a real difference is the impressive-looking
+    garbage spec 3.3 warns about, so the confound has to be named.
+    """
+    from busylab.detection import detect
+    from busylab.roles import Role
+
+    frame = fixtures.planted_business()
+    detection = detect(frame, overrides={"salesperson": Role.GROUP_BY})
+    result = analyse(frame, detection, strict=True)
+
+    segments = [f for f in result.findings if f.id.startswith("segmentation_")]
+    for finding in segments:
+        if "salesperson" in finding.id:
+            assert finding.facts["confirmed"] is False
+            assert finding.facts["mix_confounded"] is True
+            assert "mix" in finding.summary.lower()
+            assert finding.importance < 0.5, "a confounded gap must not lead"
+
+
 def test_segmentation_reports_correction_it_applied(planted) -> None:
     for finding in planted.findings:
         if finding.id.startswith("segmentation_"):

@@ -13,3 +13,9 @@ samples/
 storage/
 live_storage/
 .env
+web/node_modules/
+web/.next/
+web/out/
+web/next-env.d.ts
+dev.db
+dev_storage/
