@@ -1,13 +1,42 @@
 # BusyLab
 
 A business analyst in a box. Point it at a sales spreadsheet and it surfaces
-the non-obvious truths hidden inside it.
+the non-obvious truths hidden inside it: which product is quietly unprofitable,
+whether a decline is real or just noise, where revenue is dangerously
+concentrated. It presents all of it as a guided, visual story in plain
+language.
 
-This repository is the **analysis engine**: a pure Python library that runs
-standalone against a file on disk, with no server, no web stack and no
-deployment involved. That is spec 9's one non-negotiable, and everything here
-is built to keep it true. The API, when it exists, will be a thin wrapper
-around this package and never the other way round.
+Sector agnostic — telecom, restaurants, clothing brands, online stores, any
+business with structured sales data — but selective about input: properly
+structured tabular data only.
+
+### What makes it different
+
+**Insights, not directives.** BusyLab never says "remove this product" or
+"raise the price". It surfaces true, evidenced findings and leaves the decision
+entirely with the business owner. This is both respectful and strategic:
+directive AI carries liability, illuminating AI is trusted. The rule is
+enforced mechanically — a finding that reads as advice fails the test suite.
+
+**Only the non-obvious.** "Product 6 sells the most" is useless; they packed
+the boxes. The value is in what a human cannot see by eyeballing rows: margin
+reality, statistical significance, seasonality-adjusted movement, concentration
+risk, and the decomposition of why a number moved.
+
+**The statistics are real; the model only narrates.** A deterministic engine
+(pandas, statsmodels, scipy) does every computation. The language model's only
+jobs are turning structured findings into English and routing questions to
+pre-built analyses. It never computes, never decides, and never produces a
+number — and it cannot, because both rules are enforced in code. BusyLab runs
+fully without any model configured.
+
+### Three parts
+
+| | |
+|---|---|
+| `busylab/` | The engine. A pure Python library that runs standalone against a file on disk, with no server and no web stack. This is the one non-negotiable: the API is a thin wrapper around it, never the other way round. |
+| `api/` | FastAPI. Accepts uploads, queues work, serves cached results. Imports the engine; the engine never imports it. |
+| `web/` | Next.js. The story-led interface. |
 
 ## Status
 
@@ -21,17 +50,54 @@ around this package and never the other way round.
 | 6. Mapping memory, Sheets, folder watch, quality gate | **mapping memory + quality gate done**; Sheets and folder watch not started |
 | 7-11 | not started |
 
-## Try it
+## Getting started
+
+Python 3.10+ and Node 18+.
 
 ```bash
 python -m venv .venv
-./.venv/Scripts/python.exe -m pip install -e ".[dev]"
+.venv/Scripts/python -m pip install -e ".[dev]"      # Windows
+# source .venv/bin/activate && pip install -e ".[dev]"   # macOS / Linux
+```
 
-# Run the engine against a file and see what it understood
-./.venv/Scripts/python.exe -m busylab samples/messy_sales.xlsx
-./.venv/Scripts/python.exe -m busylab samples/monthly_tabs.xlsx
+**The engine on its own.** No server, no deployment, no API key — this is how
+iteration actually happens:
 
-./.venv/Scripts/python.exe -m pytest
+```bash
+python -m busylab path/to/sales.xlsx
+python -m busylab path/to/sales.xlsx --ask "why did revenue drop?"
+```
+
+**The full app.** Two terminals:
+
+```bash
+python -m uvicorn api.main:app --reload --port 8000   # API + worker
+cd web && npm install && npm run dev                  # http://localhost:3000
+```
+
+**Tests.**
+
+```bash
+python -m pytest
+```
+
+**Sample data.** The test fixtures generate deliberately messy workbooks and a
+business with known, planted truths:
+
+```bash
+python -c "from tests import fixtures; \
+  fixtures.planted_business().to_excel('sample.xlsx', index=False)"
+```
+
+### Optional: better prose
+
+BusyLab is fully usable with no API key — the numbers and findings are
+identical, only the wording is plainer. To enable narration, copy
+`.env.example` to `.env` and add a free [Groq](https://console.groq.com/keys)
+key:
+
+```
+GROQ_API_KEY=your_key_here
 ```
 
 ## How detection works
@@ -297,10 +363,48 @@ busylab/
     provider.py       pluggable LLM, Groq free tier, null by default
     narrate.py        facts to English, with the invented-number guard
     routing.py        question to pre-built analysis, plus follow-up chips
+  quality.py          the data quality gate
   cli.py              python -m busylab <file> [--ask "..."]
+
+api/
+  jobs.py             job queue and dataset store, SQLite behind a
+                      Postgres-shaped interface
+  handlers.py         the only seam between the web layer and the engine
+  main.py             FastAPI app
+
+web/
+  app/                landing, upload, and the dataset flow
+  components/
+    charts/Chart.tsx  one chart per finding type, chosen by the engine
+    FindingCard.tsx   chart + sentence + evidence panel
+    ColumnCheck.tsx   asks only about ambiguous columns
+    StoryView.tsx     ranked narrative and drill-down
+    QualityHold.tsx   shown when the gate holds an analysis
+  lib/                API client, types, formatting
+
 tests/
   fixtures.py         messy workbooks, planted truths, flat control
-  test_detection.py
-  test_analysis.py
-  test_narration.py
+  test_detection.py   three-layer detection and the loader
+  test_analysis.py    planted truths found, nothing invented on quiet data
+  test_narration.py   the two model guardrails
+  test_quality.py     the gate
+  test_api.py         the flow a UI drives, over HTTP
 ```
+
+## Testing approach
+
+Two fixtures carry most of the weight, and they exist because a test that only
+checks the engine agrees with itself proves nothing:
+
+- **`planted_business`** has known effects deliberately put into it: a real
+  decline from month 7 driven by the online channel, a best seller that is not
+  the best earner, profit concentrated in one product, one product sold at a
+  genuine loss, and a `salesperson` column that is pure noise. Every planted
+  truth must be found; the noise must stay silent.
+- **`flat_business`** has nothing in it at all. The engine must return **no**
+  significant findings. This is the control that catches an engine tuned to
+  always have something to say.
+
+## Licence
+
+Not yet licensed. All rights reserved.
