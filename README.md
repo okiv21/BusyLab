@@ -6,8 +6,8 @@ whether a decline is real or just noise, where revenue is dangerously
 concentrated. It presents all of it as a guided, visual story in plain
 language.
 
-Sector agnostic — telecom, restaurants, clothing brands, online stores, any
-business with structured sales data — but selective about input: properly
+Sector agnostic - telecom, restaurants, clothing brands, online stores, any
+business with structured sales data, but selective about input: properly
 structured tabular data only.
 
 ### What makes it different
