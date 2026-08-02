@@ -20,6 +20,8 @@ import pandas as pd
 
 from ..detection.engine import DetectionResult, detect
 from ..findings import Finding, Severity, check_non_directive
+from ..quality import QualityReport
+from ..quality import check as check_quality
 from ..roles import TIER_SPECS, Tier
 from . import core, segments
 from .dataset import SalesFrame, build
@@ -60,6 +62,12 @@ class AnalysisResult:
     tiers: dict[Tier, bool] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    quality: QualityReport | None = None
+
+    @property
+    def held(self) -> bool:
+        """True when the quality gate stopped this analysis being published."""
+        return self.quality is not None and not self.quality.passed
 
     @property
     def headline(self) -> Finding | None:
@@ -87,6 +95,8 @@ class AnalysisResult:
             ],
             "notes": self.notes,
             "errors": self.errors,
+            "held": self.held,
+            "quality": self.quality.to_dict() if self.quality else None,
         }
 
 
@@ -113,12 +123,17 @@ def analyse(
     detection: DetectionResult | None = None,
     *,
     strict: bool = False,
+    previous_snapshot: dict | None = None,
+    skip_quality_gate: bool = False,
 ) -> AnalysisResult:
     """Run the engine over a raw frame.
 
     ``strict`` re-raises analysis errors instead of collecting them, which is
     what the test suite wants and what production does not: one failing
     analysis should never take the whole story down.
+
+    ``previous_snapshot`` is the quality snapshot from the last run that
+    passed, which is what makes "the row count halved" answerable.
     """
     detection = detection if detection is not None else detect(raw)
     result = AnalysisResult(detection=detection, tiers=dict(detection.tiers))
@@ -127,6 +142,17 @@ def analyse(
         missing = ", ".join(sorted(r.value for r in detection.missing))
         result.errors.append(f"Cannot analyse without: {missing}")
         return result
+
+    # The gate runs before anything is computed, let alone published. A
+    # refresh that fails holds the analysis rather than publishing a
+    # confidently wrong insight (spec 4.3).
+    if not skip_quality_gate:
+        result.quality = check_quality(
+            raw, detection.assignments, previous=previous_snapshot
+        )
+        if not result.quality.passed:
+            result.notes.append(result.quality.headline)
+            return result
 
     try:
         frame = build(raw, detection)

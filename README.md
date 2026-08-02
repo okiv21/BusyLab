@@ -18,7 +18,7 @@ around this package and never the other way round.
 | 3. Narration and routing | **done** |
 | 4. Story-led UI | **done** |
 | 5. Background jobs | **done** (API, worker, job table) |
-| 6. Mapping memory, Sheets, folder watch, quality gate | fingerprint done, rest not started |
+| 6. Mapping memory, Sheets, folder watch, quality gate | **mapping memory + quality gate done**; Sheets and folder watch not started |
 | 7-11 | not started |
 
 ## Try it
@@ -120,6 +120,36 @@ Implemented (Pillar 0, the non-obvious layer):
   so `check_non_directive` enforces it mechanically over every summary and the
   test suite fails on a violation. Directive AI carries liability; illuminating
   AI is trusted.
+
+## The data quality gate
+
+Automated ingestion means bad data arrives automatically too, and nobody is
+watching (spec 4.3). A refresh with half-filled rows or a duplicated month
+poisons the analysis, and poisoned output looks exactly as confident as good
+output. So every ingest passes a gate **before** any finding is published, and
+a failure holds the analysis rather than publishing something wrong.
+
+Checked: duplicate rows, duplicated periods, null spikes in required columns,
+date gaps mid-history, future and impossible dates, mostly-negative or
+mostly-zero values, and — against the last run that passed — row count
+collapse, distribution shift, and history going backwards.
+
+The case it exists for: a partial re-export is **indistinguishable** from a
+business losing two thirds of its sales. Given a baseline, the gate says so:
+
+```
+[block] This refresh has 67% fewer rows than last time
+        984 rows now versus 2,954 before. A partial export looks exactly
+        like a collapse in sales.
+[block] This refresh ends earlier than the last one
+        Newest row is 2024-06-06 but the previous run reached 2025-06-23.
+```
+
+Two deliberate calls. **Proportionality**: only genuinely poisonous problems
+block; a 30% row drop or a handful of refunds warns and publishes, because a
+gate that stops at the first imperfection is a gate nobody leaves switched on.
+**No guessing without a baseline**: on a first upload the history checks do not
+run at all rather than inventing a comparison.
 
 ## Narration and routing
 

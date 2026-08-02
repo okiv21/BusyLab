@@ -67,6 +67,31 @@ export default function StoryView({
         </p>
       </header>
 
+      {/* The gate let this through, but said something worth knowing. */}
+      {story.quality && story.quality.issues.some((i) => i.severity === "warn") && (
+        <div
+          style={{
+            background: "var(--warn-wash)",
+            border: "1px solid var(--warn-line)",
+            borderRadius: 14,
+            padding: "13px 18px",
+            fontSize: 14,
+            color: "var(--warn-dark)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+          }}
+        >
+          {story.quality.issues
+            .filter((i) => i.severity === "warn")
+            .map((i) => (
+              <div key={i.code}>
+                <strong>{i.title}.</strong> {i.detail}
+              </div>
+            ))}
+        </div>
+      )}
+
       {story.findings.length === 0 && (
         <div className="card" style={{ padding: 28, fontSize: 15.5 }}>
           Nothing in this data stood out as unusual. That is itself a finding:

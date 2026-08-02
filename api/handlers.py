@@ -153,8 +153,23 @@ def handle_analyse(job: Job, store: JobStore) -> dict[str, Any]:
         {column: role.value for role, column in result.assignments.items()},
     )
 
+    store.set_step(job.id, "checking the data is sound")
+    # The gate compares against the last run that passed for this schema, so a
+    # halved row count or a shifted currency is visible rather than analysed.
+    previous = store.recall_snapshot(result.fingerprint)
+
     store.set_step(job.id, "checking against normal variation")
-    story = analyse(frame, result)
+    story = analyse(frame, result, previous_snapshot=previous)
+
+    if story.held:
+        payload = story.to_dict()
+        payload["chips"] = []
+        payload["columns"] = []
+        store.save_story(job.dataset_id, payload)
+        return payload
+
+    if story.quality and story.quality.snapshot:
+        store.remember_snapshot(result.fingerprint, story.quality.snapshot.to_dict())
 
     store.set_step(job.id, "ranking what matters most")
     provider = from_env()

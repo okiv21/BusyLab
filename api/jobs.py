@@ -113,6 +113,14 @@ CREATE TABLE IF NOT EXISTS mappings (
     roles        TEXT NOT NULL,
     created_at   TEXT NOT NULL
 );
+
+-- The data quality gate (spec 4.3) needs to know what the last good run
+-- looked like, otherwise "the row count halved" is unanswerable.
+CREATE TABLE IF NOT EXISTS snapshots (
+    fingerprint  TEXT PRIMARY KEY,
+    snapshot     TEXT NOT NULL,
+    created_at   TEXT NOT NULL
+);
 """
 
 
@@ -205,6 +213,24 @@ class JobStore:
                 "SELECT roles FROM mappings WHERE fingerprint = ?", (fingerprint,)
             ).fetchone()
         return json.loads(row["roles"]) if row else None
+
+    # -- quality snapshots (spec 4.3) -------------------------------------
+
+    def remember_snapshot(self, fingerprint: str, snapshot: dict[str, Any]) -> None:
+        """Record what a passing run looked like, for the next one to check."""
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO snapshots (fingerprint, snapshot, created_at) "
+                "VALUES (?, ?, ?)",
+                (fingerprint, json.dumps(snapshot), _now()),
+            )
+
+    def recall_snapshot(self, fingerprint: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT snapshot FROM snapshots WHERE fingerprint = ?", (fingerprint,)
+            ).fetchone()
+        return json.loads(row["snapshot"]) if row else None
 
     # -- jobs -------------------------------------------------------------
 

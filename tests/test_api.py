@@ -342,6 +342,41 @@ def test_a_known_schema_refreshes_without_asking_again(client, clean_file) -> No
 # --------------------------------------------------------------------------
 
 
+def test_a_bad_refresh_is_held_rather_than_published(client, tmp_path) -> None:
+    """Spec 4.3, over HTTP: a partial re-export must not become a story.
+
+    The first upload establishes the baseline. The second carries a third of
+    the rows, which is indistinguishable from a business losing two thirds of
+    its sales — so the gate holds it instead of analysing it.
+    """
+    frame = fixtures.planted_business().drop(columns=["salesperson"])
+
+    full = tmp_path / "full.xlsx"
+    frame.to_excel(full, index=False)
+    first = _upload(client, full)
+    client.worker.drain()
+    client.post(f"/datasets/{first['dataset_id']}/columns", json={"roles": {}})
+    client.worker.drain()
+
+    good = client.get(f"/datasets/{first['dataset_id']}/story").json()
+    assert good["held"] is False
+    assert good["findings"]
+
+    partial = tmp_path / "partial.xlsx"
+    frame.head(len(frame) // 3).to_excel(partial, index=False)
+    second = _upload(client, partial)
+    client.worker.drain()
+    client.post(f"/datasets/{second['dataset_id']}/columns", json={"roles": {}})
+    client.worker.drain()
+
+    held = client.get(f"/datasets/{second['dataset_id']}/story").json()
+
+    assert held["held"] is True
+    assert held["findings"] == []
+    assert held["quality"]["passed"] is False
+    assert held["quality"]["issues"], "the user must be told what went wrong"
+
+
 def test_dataset_can_be_deleted_with_its_raw_file(client, clean_file) -> None:
     """Raw files accumulate and storage is where cost bites (spec 9)."""
     upload = _upload(client, clean_file)

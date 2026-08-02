@@ -14,6 +14,7 @@ import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { AppHeader, Stepper } from "@/components/Brand";
 import ColumnCheck from "@/components/ColumnCheck";
+import QualityHold from "@/components/QualityHold";
 import StoryView from "@/components/StoryView";
 import { ApiError, confirmColumns, getColumns, getStory, waitForJob } from "@/lib/api";
 import type { Columns, Story } from "@/lib/types";
@@ -102,7 +103,16 @@ export default function DatasetPage() {
 
         {stage === "analysing" && <Analysing step={step} />}
 
-        {stage === "story" && story && <StoryView story={story} datasetId={id} />}
+        {stage === "story" && story && story.held && story.quality && (
+          <QualityHold
+            quality={story.quality}
+            onRetry={() => window.location.assign("/upload")}
+          />
+        )}
+
+        {stage === "story" && story && !story.held && (
+          <StoryView story={story} datasetId={id} />
+        )}
 
         {stage === "error" && (
           <Centered>

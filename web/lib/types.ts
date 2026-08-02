@@ -51,6 +51,21 @@ export interface Chip {
   label: string;
 }
 
+export interface QualityIssue {
+  code: string;
+  severity: "block" | "warn" | "info";
+  title: string;
+  detail: string;
+  count: number | null;
+  sample: string[];
+}
+
+export interface Quality {
+  passed: boolean;
+  headline: string;
+  issues: QualityIssue[];
+}
+
 export interface Story {
   findings: Finding[];
   tiers: Record<string, boolean>;
@@ -59,6 +74,8 @@ export interface Story {
   errors: string[];
   chips: Chip[];
   columns: string[];
+  held: boolean;
+  quality: Quality | null;
 }
 
 export interface RoleOption {
