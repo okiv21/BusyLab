@@ -48,6 +48,7 @@ class FindingType(str, Enum):
     CUSTOMER_SEGMENTS = "customer_segments"
     COHORT_RETENTION = "cohort_retention"
     RELATIONSHIP = "relationship"  # products moving together
+    BASKET = "basket"  # products bought together in the same order
     GOAL_PACE = "goal_pace"
     DATA_QUALITY = "data_quality"
 
@@ -89,6 +90,9 @@ _CHART_BY_TYPE: dict[FindingType, ChartType] = {
     FindingType.CUSTOMER_SEGMENTS: ChartType.QUADRANT,
     FindingType.COHORT_RETENTION: ChartType.COHORT_HEATMAP,
     FindingType.RELATIONSHIP: ChartType.CORRELATION_HEATMAP,
+    # Pairs with a lift multiple read as a ranked list, not a matrix: the
+    # question is "which pairings are strongest", which is a sorted bar.
+    FindingType.BASKET: ChartType.BAR_HORIZONTAL,
     FindingType.GOAL_PACE: ChartType.PROGRESS_ARC,
     FindingType.DATA_QUALITY: ChartType.CALLOUT,
 }

@@ -49,7 +49,8 @@ fully without any model configured.
 | 5. Background jobs | **done** (API, worker, job table) |
 | 6. Mapping memory, Sheets, folder watch, quality gate | **mapping memory + quality gate done**; Sheets and folder watch not started |
 | 7. Forecasting | **done** (ARIMA, bands mandatory) |
-| 8-11 | not started |
+| 8. Customer intelligence and goals | **Pillar 3 done**; goals (Pillar 4) not started |
+| 9-11 | not started |
 
 ## Getting started
 
@@ -167,6 +168,10 @@ Implemented (Pillar 0, the non-obvious layer):
 | `product_ranking` | Table stakes. Ranked last on purpose. |
 | `revenue_forecast` | Where total revenue is heading, with bands |
 | `product_forecasts` | Per-product projection, and any heading below break-even |
+| `repeat_vs_new` | Is it a discovery problem or a loyalty problem? |
+| `rfm_segments` | Champions, At risk, Lost, New - sorted automatically |
+| `cohort_retention` | Does each month's intake stick? |
+| `basket_analysis` | What gets bought together, beyond chance |
 
 ### Decisions worth knowing
 
@@ -189,6 +194,31 @@ Implemented (Pillar 0, the non-obvious layer):
   so `check_non_directive` enforces it mechanically over every summary and the
   test suite fails on a violation. Directive AI carries liability; illuminating
   AI is trusted.
+
+## Customer intelligence
+
+Requires a customer id, and nothing here runs without one. Four questions
+(spec Pillar 3), each answering something a revenue total cannot:
+
+**Repeat versus new.** Two businesses with identical revenue curves need
+completely different things depending on whether the change is in who arrives
+or who comes back. Only reported when the two halves genuinely diverge.
+
+**RFM segmentation.** Scores are quartiles *within this business*, not fixed
+thresholds - a naira figure that means "big spender" in one shop is a rounding
+error in another. Recency is measured against the last sale in the file rather
+than today, so a file from last year does not report every customer as lost.
+
+**Cohort retention.** Each age is averaged only over cohorts old enough to have
+reached it, because a cohort one month old has not failed to survive twelve
+months. Cohorts too small to read are excluded rather than averaged in.
+
+**Basket analysis** is the dangerous one, and gets the same treatment as
+segmentation. Every product pair is a comparison, so a thirty-product catalogue
+is 435 tests. Lift is FDR-corrected across the whole family and floored at a
+minimum number of baskets, because a huge multiple on two co-occurrences means
+nothing. The finding also states what counted as a basket - one order, or one
+customer on one day - since those are different claims.
 
 ## Forecasting
 

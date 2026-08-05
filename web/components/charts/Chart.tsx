@@ -776,9 +776,332 @@ function ForecastChart({ finding }: { finding: Finding }) {
   );
 }
 
+/* --- baskets: what gets bought together -------------------------------- */
+
+function BasketChart({ finding }: { finding: Finding }) {
+  const bars = (finding.chart_data?.bars ?? []) as {
+    label: string;
+    value: number;
+    share: number;
+  }[];
+  if (!bars.length) return <Empty label="No pairings stood out." />;
+
+  // Values are lift multiples, not money, so 1.0 is the "no association"
+  // baseline and the axis has to be read against it.
+  return (
+    <ResponsiveContainer width="100%" height={Math.max(150, bars.length * 40)}>
+      <BarChart
+        data={bars}
+        layout="vertical"
+        margin={{ top: 4, right: 52, bottom: 4, left: 8 }}
+      >
+        <XAxis type="number" hide domain={[0, "dataMax"]} />
+        <YAxis
+          type="category"
+          dataKey="label"
+          {...axis}
+          width={190}
+          tick={{ fill: "#211c15", fontSize: 12.5, fontFamily: "Albert Sans" }}
+        />
+        <Tooltip
+          {...tooltipStyle}
+          formatter={(v: number, _name, entry: any) => [
+            `${v.toFixed(1)}x more often than chance · in ${(
+              (entry?.payload?.share ?? 0) * 100
+            ).toFixed(1)}% of baskets`,
+            "lift",
+          ]}
+        />
+        <ReferenceLine x={1} stroke={GREY} strokeDasharray="4 4" />
+        <Bar dataKey="value" radius={[6, 6, 6, 6]} animationDuration={520}>
+          {bars.map((_, i) => (
+            <Cell key={i} fill={RAMP[Math.min(i, RAMP.length - 1)]} />
+          ))}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+/* --- repeat vs new: the composition shift ------------------------------ */
+
+function RepeatVsNewChart({ finding }: { finding: Finding }) {
+  const series = (finding.chart_data?.series ?? []) as {
+    period: string;
+    repeat: number;
+    new: number;
+  }[];
+  if (series.length < 2) return <Empty label="Not enough history yet." />;
+
+  return (
+    <ResponsiveContainer width="100%" height={230}>
+      <ComposedChart data={series} margin={{ top: 8, right: 12, bottom: 4, left: 4 }}>
+        <XAxis dataKey="period" {...axis} minTickGap={40} />
+        <YAxis {...axis} width={62} tickFormatter={(v) => compact(v)} />
+        <Tooltip
+          {...tooltipStyle}
+          formatter={(v: number, name) => [
+            money(v),
+            name === "new" ? "first-time" : "returning",
+          ]}
+        />
+        <Area
+          type="monotone"
+          dataKey="repeat"
+          stackId="1"
+          stroke={ACCENT}
+          fill={ACCENT}
+          fillOpacity={0.85}
+          isAnimationActive
+          animationDuration={520}
+          name="returning"
+        />
+        <Area
+          type="monotone"
+          dataKey="new"
+          stackId="1"
+          stroke={ACCENT_SOFT}
+          fill={ACCENT_SOFT}
+          fillOpacity={0.9}
+          isAnimationActive
+          animationDuration={520}
+          name="new"
+        />
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
+/* --- RFM: who your champions and at-risk customers are ----------------- */
+
+const SEGMENT_COLOUR: Record<string, string> = {
+  Champions: GOOD,
+  Loyal: "#8fcdb4",
+  New: ACCENT,
+  "At risk": "#e9a23b",
+  Lost: GREY,
+  Occasional: "#e5dfd5",
+};
+
+function SegmentQuadrant({ finding }: { finding: Finding }) {
+  const customers = (finding.chart_data?.customers ?? []) as {
+    recency: number;
+    frequency: number;
+    spend: number;
+    segment: string;
+  }[];
+  const segments = (finding.chart_data?.segments ?? []) as {
+    segment: string;
+    customers: number;
+    share: number;
+  }[];
+  if (!customers.length) return <Empty label="Not enough customers to group." />;
+
+  // Recency inverted so "bought recently" sits on the right, which is how a
+  // reader expects better to read.
+  const maxRecency = Math.max(...customers.map((c) => c.recency), 1);
+  const data = customers.map((c) => ({
+    ...c,
+    recentness: maxRecency - c.recency,
+  }));
+
+  return (
+    <div style={{ display: "flex", gap: 26, flexWrap: "wrap", alignItems: "center" }}>
+      <div style={{ flex: "1 1 320px", minWidth: 280 }}>
+        <ResponsiveContainer width="100%" height={250}>
+          <ScatterChart margin={{ top: 12, right: 18, bottom: 26, left: 6 }}>
+            <XAxis
+              type="number"
+              dataKey="recentness"
+              {...axis}
+              tick={false}
+              label={{
+                value: "bought recently →",
+                position: "insideBottom",
+                offset: -12,
+                fill: INK_LIGHT,
+                fontSize: 11.5,
+              }}
+            />
+            <YAxis
+              type="number"
+              dataKey="frequency"
+              {...axis}
+              width={44}
+              label={{
+                value: "buys often →",
+                angle: -90,
+                position: "insideLeft",
+                fill: INK_LIGHT,
+                fontSize: 11.5,
+              }}
+            />
+            <ZAxis type="number" dataKey="spend" range={[30, 300]} />
+            <Tooltip
+              {...tooltipStyle}
+              content={({ payload }) => {
+                const p = payload?.[0]?.payload;
+                if (!p) return null;
+                return (
+                  <div
+                    style={{
+                      background: "#fff",
+                      border: "1px solid #f0ebe3",
+                      borderRadius: 12,
+                      padding: "10px 12px",
+                      fontSize: 13,
+                      boxShadow: "0 8px 24px rgba(33,28,21,0.10)",
+                    }}
+                  >
+                    <strong>{p.segment}</strong>
+                    <div style={{ color: INK_LIGHT }}>
+                      {p.frequency} orders · {money(p.spend)} · last bought{" "}
+                      {p.recency} days before the file ends
+                    </div>
+                  </div>
+                );
+              }}
+            />
+            <Scatter data={data} animationDuration={520}>
+              {data.map((c, i) => (
+                <Cell
+                  key={i}
+                  fill={SEGMENT_COLOUR[c.segment] ?? GREY}
+                  fillOpacity={0.75}
+                />
+              ))}
+            </Scatter>
+          </ScatterChart>
+        </ResponsiveContainer>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 14 }}>
+        {segments.map((s) => (
+          <div key={s.segment} style={{ display: "flex", alignItems: "center", gap: 9 }}>
+            <span
+              style={{
+                width: 11,
+                height: 11,
+                borderRadius: 4,
+                background: SEGMENT_COLOUR[s.segment] ?? GREY,
+              }}
+            />
+            <span style={{ minWidth: 92 }}>{s.segment}</span>
+            <span style={{ color: INK_LIGHT }}>
+              {s.customers} · {Math.round(s.share * 100)}%
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* --- cohort retention: does each intake stick? ------------------------- */
+
+function CohortHeatmap({ finding }: { finding: Finding }) {
+  const cohorts = (finding.chart_data?.cohorts ?? []) as {
+    cohort: string;
+    size: number;
+    rates: { age: number; retention: number }[];
+  }[];
+  if (!cohorts.length) return <Empty label="Not enough cohorts to compare." />;
+
+  const shown = cohorts.slice(-10);
+  const maxAge = Math.max(
+    ...shown.flatMap((c) => c.rates.map((r) => r.age)),
+    1
+  );
+  const ages = Array.from({ length: Math.min(maxAge + 1, 13) }, (_, i) => i);
+
+  const cell = 40;
+  const rowH = 26;
+  const labelW = 78;
+  const width = labelW + ages.length * cell + 8;
+  const height = shown.length * rowH + 34;
+
+  const shade = (r: number) =>
+    `rgba(232, 90, 50, ${Math.max(0.08, Math.min(r, 1)) * 0.9})`;
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        style={{ width: "100%", minWidth: 420, height: "auto" }}
+      >
+        {ages.map((age) => (
+          <text
+            key={`h-${age}`}
+            x={labelW + age * cell + cell / 2 - 2}
+            y={12}
+            textAnchor="middle"
+            fontFamily="Albert Sans"
+            fontSize={10.5}
+            fill={INK_LIGHT}
+          >
+            {age === 0 ? "start" : `+${age}`}
+          </text>
+        ))}
+        {shown.map((cohort, row) => {
+          const y = 22 + row * rowH;
+          const byAge = new Map(cohort.rates.map((r) => [r.age, r.retention]));
+          return (
+            <g key={cohort.cohort}>
+              <text
+                x={labelW - 10}
+                y={y + rowH / 2 - 1}
+                textAnchor="end"
+                dominantBaseline="middle"
+                fontFamily="Albert Sans"
+                fontSize={11}
+                fill="#211c15"
+              >
+                {cohort.cohort}
+              </text>
+              {ages.map((age) => {
+                const value = byAge.get(age);
+                if (value === undefined) return null;
+                return (
+                  <g key={age}>
+                    <rect
+                      x={labelW + age * cell}
+                      y={y}
+                      width={cell - 3}
+                      height={rowH - 4}
+                      rx={4}
+                      fill={shade(value)}
+                    />
+                    {cell > 30 && (
+                      <text
+                        x={labelW + age * cell + (cell - 3) / 2}
+                        y={y + (rowH - 4) / 2}
+                        textAnchor="middle"
+                        dominantBaseline="middle"
+                        fontFamily="Albert Sans"
+                        fontSize={9.5}
+                        fontWeight={600}
+                        fill={value > 0.55 ? "#fff" : "#6e675c"}
+                      >
+                        {Math.round(value * 100)}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
 /* --- router ------------------------------------------------------------ */
 
 export default function Chart({ finding }: { finding: Finding }) {
+  // Baskets share bar_horizontal with rankings but carry lift multiples rather
+  // than money, so they need their own reading of the same shape.
+  if (finding.type === "basket") return <BasketChart finding={finding} />;
+
   switch (finding.chart) {
     case "line_with_band":
       return <TrendChart finding={finding} />;
@@ -797,6 +1120,12 @@ export default function Chart({ finding }: { finding: Finding }) {
       return <CorrelationChart finding={finding} />;
     case "forecast_fan":
       return <ForecastChart finding={finding} />;
+    case "stacked_area":
+      return <RepeatVsNewChart finding={finding} />;
+    case "quadrant":
+      return <SegmentQuadrant finding={finding} />;
+    case "cohort_heatmap":
+      return <CohortHeatmap finding={finding} />;
     default:
       // A finding type whose chart is not built yet still shows its sentence
       // rather than an empty frame or a wrong picture.

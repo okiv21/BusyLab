@@ -311,6 +311,106 @@ def seasonal_business(seed: int = 44, years: int = 3) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+#: Bought together on purpose, so basket analysis has a real pair to find.
+COMPANION = "Matches Tin"
+
+
+def customer_business(seed: int = 77, months: int = 18) -> pd.DataFrame:
+    """A business with deliberately planted customer behaviour.
+
+    Planted facts, so the tests check against ground truth rather than against
+    whatever the engine happens to say:
+
+    * **Cohort decay.** Each month brings in new customers who return with a
+      declining probability, so retention falls with age rather than randomly.
+    * **Champions.** A fixed set of 40 customers who buy frequently throughout.
+    * **Lost customers.** 60 customers who bought early and then stopped dead.
+    * **A real basket pair.** Linen Candle is bought with Matches Tin far more
+      often than chance; every other pairing is independent.
+    * **Acquisition falling off.** New-customer intake halves in the second
+      half while returning customers keep buying, so the repeat-vs-new split
+      has an unambiguous answer.
+    """
+    rng = np.random.default_rng(seed)
+    rows: list[dict] = []
+    start = pd.Timestamp("2024-01-01")
+
+    def sale(customer: int, when: pd.Timestamp, order_id: int) -> None:
+        product = str(rng.choice(PRODUCTS, p=[0.34, 0.22, 0.18, 0.14, 0.12]))
+        qty = int(rng.integers(1, 4))
+        price = PRICES[product]
+        rows.append(
+            {
+                "order_date": when,
+                "order_id": f"SO{order_id:05d}",
+                "customer_id": f"C{customer:04d}",
+                "product_name": product,
+                "quantity": qty,
+                "unit_price": price,
+                "total_paid": round(price * qty, 2),
+            }
+        )
+        # The planted pair: a candle usually brings matches with it.
+        if product == "Linen Candle" and rng.random() < 0.7:
+            rows.append(
+                {
+                    "order_date": when,
+                    "order_id": f"SO{order_id:05d}",
+                    "customer_id": f"C{customer:04d}",
+                    "product_name": COMPANION,
+                    "quantity": 1,
+                    "unit_price": 900.0,
+                    "total_paid": 900.0,
+                }
+            )
+
+    order_id = 1
+    champions = list(range(1, 41))
+    lost = list(range(500, 560))
+    next_customer = 1000
+
+    for month in range(months):
+        month_start = start + pd.DateOffset(months=month)
+
+        # Champions keep buying, all the way through.
+        for customer in champions:
+            for _ in range(int(rng.integers(1, 4))):
+                day = int(rng.integers(0, 28))
+                sale(customer, month_start + pd.Timedelta(days=day), order_id)
+                order_id += 1
+
+        # The lost cohort bought only in the first three months.
+        if month < 3:
+            for customer in lost:
+                day = int(rng.integers(0, 28))
+                sale(customer, month_start + pd.Timedelta(days=day), order_id)
+                order_id += 1
+
+        # New intake, halving in the second half of the period.
+        intake = 45 if month < months // 2 else 22
+        cohort = list(range(next_customer, next_customer + intake))
+        next_customer += intake
+
+        for customer in cohort:
+            day = int(rng.integers(0, 28))
+            sale(customer, month_start + pd.Timedelta(days=day), order_id)
+            order_id += 1
+
+            # Planted decay: returning gets less likely as the cohort ages.
+            for age in range(1, months - month):
+                if rng.random() > 0.62 * (0.78**(age - 1)):
+                    break
+                later = month_start + pd.DateOffset(months=age)
+                sale(
+                    customer,
+                    later + pd.Timedelta(days=int(rng.integers(0, 28))),
+                    order_id,
+                )
+                order_id += 1
+
+    return pd.DataFrame(rows).sort_values("order_date").reset_index(drop=True)
+
+
 def write_clean_workbook(path: str | Path, n: int = 300, seed: int = 42) -> Path:
     """A tidy single-sheet workbook. Must reach analysis with zero questions."""
     path = Path(path)
