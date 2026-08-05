@@ -16,7 +16,7 @@ structured tabular data only.
 "raise the price". It surfaces true, evidenced findings and leaves the decision
 entirely with the business owner. This is both respectful and strategic:
 directive AI carries liability, illuminating AI is trusted. The rule is
-enforced mechanically — a finding that reads as advice fails the test suite.
+enforced mechanically - a finding that reads as advice fails the test suite.
 
 **Only the non-obvious.** "Product 6 sells the most" is useless; they packed
 the boxes. The value is in what a human cannot see by eyeballing rows: margin
@@ -27,7 +27,7 @@ risk, and the decomposition of why a number moved.
 (pandas, statsmodels, scipy) does every computation. The language model's only
 jobs are turning structured findings into English and routing questions to
 pre-built analyses. It never computes, never decides, and never produces a
-number — and it cannot, because both rules are enforced in code. BusyLab runs
+number - and it cannot, because both rules are enforced in code. BusyLab runs
 fully without any model configured.
 
 ### Three parts
@@ -61,7 +61,7 @@ python -m venv .venv
 # source .venv/bin/activate && pip install -e ".[dev]"   # macOS / Linux
 ```
 
-**The engine on its own.** No server, no deployment, no API key — this is how
+**The engine on its own.** No server, no deployment, no API key - this is how
 iteration actually happens:
 
 ```bash
@@ -92,7 +92,7 @@ python -c "from tests import fixtures; \
 
 ### Optional: better prose
 
-BusyLab is fully usable with no API key — the numbers and findings are
+BusyLab is fully usable with no API key - the numbers and findings are
 identical, only the wording is plainer. To enable narration, copy
 `.env.example` to `.env` and add a free [Groq](https://console.groq.com/keys)
 key:
@@ -106,7 +106,7 @@ GROQ_API_KEY=your_key_here
 Three layers, in the order spec 3.2 requires: **keywords propose, content
 verifies, the user confirms only the ambiguous.**
 
-**Layer 1 — `detection/keywords.py`.** A per-role dictionary including
+**Layer 1 - `detection/keywords.py`.** A per-role dictionary including
 abbreviations, real misspellings and Nigerian context terms (naira, LGA, amt,
 qty, desc). Every term carries a weight. Words that mean exactly one thing
 (`revenue`, `cogs`, `customer id`) score high; words that appear in half the
@@ -114,12 +114,12 @@ money columns ever written (`amount`, `total`, `value`) score deliberately
 low. That weighting is what stops `discount_amount` being read as revenue,
 which spec 3.2 names as the dangerous silent failure.
 
-**Layer 2 — `detection/content.py`.** Profiles the values and scores how
+**Layer 2 - `detection/content.py`.** Profiles the values and scores how
 plausible each role is. It does two things keywords structurally cannot:
 *rescue* a column called `Column3` that parses cleanly as dates, and *veto* a
 column called `date` that holds `"Lagos, Ikeja"`.
 
-**Layer 3 — `detection/engine.py`.** Blends the two, assigns roles greedily so
+**Layer 3 - `detection/engine.py`.** Blends the two, assigns roles greedily so
 the strongest evidence claims its role first, and raises a question **only**
 where the layers disagree or two columns genuinely compete. A clean file
 produces zero prompts. A messy file is asked about its own mess and nothing
@@ -147,7 +147,7 @@ else.
 ## How analysis works
 
 Every analysis takes a `SalesFrame` and returns `Finding` objects. A finding is
-structured, numeric and evidenced — never a sentence and never advice. The
+structured, numeric and evidenced - never a sentence and never advice. The
 chart is a deterministic function of the finding's type (spec 7), so the shape
 of the insight picks the visual and nothing downstream guesses.
 
@@ -174,7 +174,7 @@ Implemented (Pillar 0, the non-obvious layer):
   each whole family of tests. Bonferroni was rejected as too conservative on a
   family of hundreds: it would suppress the real findings along with the false
   ones. On 200 tests of pure noise, naive testing reports about 10 findings and
-  this reports none — which is the difference between a product and a random
+  this reports none - which is the difference between a product and a random
   number generator with opinions.
 - **Statistical and material significance are different.** A large enough
   sample makes a 2% drift detectable. It is still not news, so a movement must
@@ -195,7 +195,7 @@ Implemented (Pillar 0, the non-obvious layer):
 ARIMA only (spec Pillar 1's model policy): light, interpretable, and it runs on
 a CPU-only laptop and a small instance. Deep models are parked until there is a
 clear accuracy gap and a compute budget. Order is chosen by **AICc** over a
-bounded grid — the small-sample correction matters, because on seventeen
+bounded grid - the small-sample correction matters, because on seventeen
 monthly points plain AIC will pick a five-parameter model that has fitted the
 alternating noise as a cycle and will then forecast that imaginary cycle
 forward with confident narrow bands.
@@ -230,7 +230,7 @@ a failure holds the analysis rather than publishing something wrong.
 
 Checked: duplicate rows, duplicated periods, null spikes in required columns,
 date gaps mid-history, future and impossible dates, mostly-negative or
-mostly-zero values, and — against the last run that passed — row count
+mostly-zero values, and - against the last run that passed - row count
 collapse, distribution shift, and history going backwards.
 
 The case it exists for: a partial re-export is **indistinguishable** from a
@@ -255,7 +255,7 @@ run at all rather than inventing a comparison.
 The model writes sentences and picks which analysis answers a question. It
 never computes, never decides and never produces a number (spec 2). Everything
 degrades cleanly to deterministic behaviour, so **BusyLab is fully usable with
-no API key** — the numbers and findings are identical, only the prose is
+no API key** - the numbers and findings are identical, only the prose is
 plainer.
 
 ```bash
@@ -307,21 +307,21 @@ waterfall and the correlation heatmap, Framer Motion for entrances.
 It is a story, not a dashboard (spec 6). There is no chart picker, no axis
 selector and no filter panel anywhere in the app on purpose: the user reads a
 result the engine ranked and the design laid out. Interactivity only ever goes
-*deeper into* findings that already exist — guided chips, a question box that
+*deeper into* findings that already exist - guided chips, a question box that
 routes to a pre-built analysis, and an evidence panel on every card.
 
 The chart is chosen by `finding.chart`, which the engine set. The frontend
 switches on it and decides nothing.
 
 Screens built: landing, upload, column check, analysing, story, drill-down.
-Forecast, customers, goals and alerts are deliberately absent — there is no
+Forecast, customers, goals and alerts are deliberately absent - there is no
 engine behind them yet (build steps 7 to 9), and a screen showing invented
 numbers would undo the point of the whole product.
 
 ## The API
 
 A separate `api/` package that imports `busylab`. The dependency only ever
-points that way, which is what keeps the engine shippable on its own — there is
+points that way, which is what keeps the engine shippable on its own - there is
 a test that asserts importing the engine never pulls in FastAPI.
 
 ```bash
@@ -331,7 +331,7 @@ a test that asserts importing the engine never pulls in FastAPI.
 
 Analysis does not run inside the request. An upload returns a job id
 immediately, a worker processes it off the request cycle, and the frontend
-polls — spec 9 calls this architectural rather than cosmetic, and nothing
+polls - spec 9 calls this architectural rather than cosmetic, and nothing
 proactive can exist without it.
 
 | Endpoint | Purpose |
