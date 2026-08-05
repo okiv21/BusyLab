@@ -23,7 +23,7 @@ from ..findings import Finding, Severity, check_non_directive
 from ..quality import QualityReport
 from ..quality import check as check_quality
 from ..roles import TIER_SPECS, Tier
-from . import core, segments
+from . import core, forecast, segments
 from .dataset import SalesFrame, build
 
 log = logging.getLogger(__name__)
@@ -40,6 +40,8 @@ ANALYSES: tuple[Callable[[SalesFrame], list[Finding]], ...] = (
     core.product_ranking,
     segments.segmentation,
     segments.product_relationships,
+    forecast.revenue_forecast,
+    forecast.product_forecasts,
 )
 
 #: Severity nudges the order: a real decline outranks a pleasant fact of equal

@@ -84,14 +84,46 @@ class SalesFrame:
 
     # -- shaping ----------------------------------------------------------
     def by_period(
-        self, freq: str = "MS", value: str = REVENUE, how: str = "sum"
+        self,
+        freq: str = "MS",
+        value: str = REVENUE,
+        how: str = "sum",
+        *,
+        drop_partial: bool = False,
     ) -> pd.Series:
-        """Total ``value`` per period. ``MS`` is calendar months."""
+        """Total ``value`` per period. ``MS`` is calendar months.
+
+        ``drop_partial`` removes a trailing period the data does not fully
+        cover. A file exported on the 23rd has a final month holding two thirds
+        of a month's sales, which looks exactly like a collapse — and anything
+        fitted through it will then "recover" from a crash that never happened.
+        """
         if value not in self.data.columns:
             return pd.Series(dtype="float64")
         grouped = self.data.set_index(DATE)[value].resample(freq)
         series = getattr(grouped, how)()
-        return series.dropna() if how != "sum" else series
+        series = series.dropna() if how != "sum" else series
+        if drop_partial and len(series) > 1 and self._last_period_incomplete(freq):
+            series = series.iloc[:-1]
+        return series
+
+    #: Resample offsets and Period frequencies are different vocabularies:
+    #: "MS" is a valid resample rule but not a valid Period freq, and asking
+    #: for one with the other raises rather than converting.
+    _PERIOD_FREQ = {"MS": "M", "M": "M", "QS": "Q", "Q": "Q", "YS": "Y", "A": "Y", "W": "W", "D": "D"}
+
+    def _last_period_incomplete(self, freq: str) -> bool:
+        """True when the data stops before the end of its final period."""
+        if self.data.empty:
+            return False
+        period_freq = self._PERIOD_FREQ.get(freq, freq)
+        last = self.data[DATE].max()
+        try:
+            period_end = last.to_period(period_freq).end_time
+        except (ValueError, AttributeError):
+            return False
+        # Same-day tolerance: a period is complete once its final day appears.
+        return bool(last.normalize() < period_end.normalize())
 
     def by_product(self, value: str = REVENUE, how: str = "sum") -> pd.Series:
         """Total ``value`` per product, largest first."""
@@ -101,7 +133,7 @@ class SalesFrame:
         return series.sort_values(ascending=False)
 
     def product_period(
-        self, freq: str = "MS", value: str = REVENUE
+        self, freq: str = "MS", value: str = REVENUE, *, drop_partial: bool = False
     ) -> pd.DataFrame:
         """A product-by-period matrix, for trends and correlations."""
         if value not in self.data.columns:
@@ -112,7 +144,10 @@ class SalesFrame:
             values=value,
             aggfunc="sum",
         )
-        return pivot.fillna(0.0)
+        pivot = pivot.fillna(0.0)
+        if drop_partial and len(pivot) > 1 and self._last_period_incomplete(freq):
+            pivot = pivot.iloc[:-1]
+        return pivot
 
     def natural_frequency(self) -> str:
         """Month, week or day, whichever gives enough points to reason about.

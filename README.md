@@ -48,7 +48,8 @@ fully without any model configured.
 | 4. Story-led UI | **done** |
 | 5. Background jobs | **done** (API, worker, job table) |
 | 6. Mapping memory, Sheets, folder watch, quality gate | **mapping memory + quality gate done**; Sheets and folder watch not started |
-| 7-11 | not started |
+| 7. Forecasting | **done** (ARIMA, bands mandatory) |
+| 8-11 | not started |
 
 ## Getting started
 
@@ -164,6 +165,8 @@ Implemented (Pillar 0, the non-obvious layer):
 | `segmentation` | Do groups genuinely differ, after FDR correction? |
 | `product_relationships` | What moves together, with the causation caveat attached |
 | `product_ranking` | Table stakes. Ranked last on purpose. |
+| `revenue_forecast` | Where total revenue is heading, with bands |
+| `product_forecasts` | Per-product projection, and any heading below break-even |
 
 ### Decisions worth knowing
 
@@ -186,6 +189,36 @@ Implemented (Pillar 0, the non-obvious layer):
   so `check_non_directive` enforces it mechanically over every summary and the
   test suite fails on a violation. Directive AI carries liability; illuminating
   AI is trusted.
+
+## Forecasting
+
+ARIMA only (spec Pillar 1's model policy): light, interpretable, and it runs on
+a CPU-only laptop and a small instance. Deep models are parked until there is a
+clear accuracy gap and a compute budget. Order is chosen by **AICc** over a
+bounded grid — the small-sample correction matters, because on seventeen
+monthly points plain AIC will pick a five-parameter model that has fitted the
+alternating noise as a cycle and will then forecast that imaginary cycle
+forward with confident narrow bands.
+
+Four rules keep a forecast honest:
+
+- **Bands are mandatory**, 80% and 95%. A single projected number invites a
+  business to plan against precision that does not exist.
+- **A direction is claimed only when the band supports it, across the whole
+  horizon.** If the interval still contains where the business is now, the
+  answer is "holds roughly where it is". An oscillating fit can land its last
+  step on a peak, so "heading up" has to mean consistently up rather than up
+  on the month we happened to stop at.
+- **The forecast reports its own accuracy.** The model is refit without the
+  last few periods and scored against what actually happened. A model that
+  could not predict the past does not get to assert the future.
+- **Bounds are respected.** ARIMA is unbounded, so a steep decline happily
+  projects revenue through zero; revenue is floored at zero. Profit is not,
+  because going below zero is precisely the break-even finding.
+
+A partial final period is dropped before fitting. A file exported on the 23rd
+has a two-thirds month on the end that looks exactly like a collapse, and
+anything fitted through it then "recovers" from a crash that never happened.
 
 ## The data quality gate
 

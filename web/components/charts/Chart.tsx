@@ -654,6 +654,128 @@ function CorrelationChart({ finding }: { finding: Finding }) {
   );
 }
 
+/* --- forecast: where this is heading, and how sure we are -------------- */
+
+function ForecastChart({ finding }: { finding: Finding }) {
+  const history = (finding.chart_data?.history ?? []) as {
+    period: string;
+    value: number;
+  }[];
+  const forecast = (finding.chart_data?.forecast ?? []) as {
+    period: string;
+    mean: number;
+    lower80: number;
+    upper80: number;
+    lower95: number;
+    upper95: number;
+  }[];
+  if (!history.length || !forecast.length) {
+    return <Empty label="Not enough history to project from." />;
+  }
+
+  // One continuous series so the fan starts exactly where the history stops.
+  const last = history[history.length - 1];
+  const data = [
+    ...history.map((h) => ({
+      period: h.period,
+      actual: h.value,
+      mean: null as number | null,
+      band80: null as [number, number] | null,
+      band95: null as [number, number] | null,
+    })),
+    // Join point: the fan is pinned to the final actual value.
+    {
+      period: last.period,
+      actual: last.value,
+      mean: last.value,
+      band80: [last.value, last.value] as [number, number],
+      band95: [last.value, last.value] as [number, number],
+    },
+    ...forecast.map((f) => ({
+      period: f.period,
+      actual: null as number | null,
+      mean: f.mean,
+      band80: [f.lower80, f.upper80] as [number, number],
+      band95: [f.lower95, f.upper95] as [number, number],
+    })),
+  ];
+
+  const crossesBreakEven = finding.facts?.crosses_break_even === true;
+
+  return (
+    <ResponsiveContainer width="100%" height={250}>
+      <ComposedChart data={data} margin={{ top: 10, right: 14, bottom: 4, left: 4 }}>
+        <XAxis dataKey="period" {...axis} minTickGap={44} />
+        <YAxis {...axis} width={64} tickFormatter={(v) => compact(v)} />
+        <Tooltip
+          {...tooltipStyle}
+          formatter={(v: any, name) => {
+            if (Array.isArray(v)) return [`${compact(v[0])} – ${compact(v[1])}`, name];
+            return [money(v as number), name === "actual" ? "actual" : "projected"];
+          }}
+        />
+
+        {/* Outer band first so the inner one reads as more likely. */}
+        <Area
+          dataKey="band95"
+          stroke="none"
+          fill={ACCENT_SOFT}
+          fillOpacity={0.35}
+          isAnimationActive={false}
+          name="95% range"
+        />
+        <Area
+          dataKey="band80"
+          stroke="none"
+          fill={ACCENT_SOFT}
+          fillOpacity={0.7}
+          isAnimationActive={false}
+          name="80% range"
+        />
+
+        {crossesBreakEven && (
+          <ReferenceLine
+            y={0}
+            stroke="#b06a1e"
+            strokeWidth={1.5}
+            strokeDasharray="5 5"
+            label={{
+              value: "break-even",
+              position: "insideTopLeft",
+              fill: "#b06a1e",
+              fontSize: 11.5,
+              fontWeight: 600,
+            }}
+          />
+        )}
+
+        <Line
+          type="monotone"
+          dataKey="actual"
+          stroke={ACCENT}
+          strokeWidth={2.5}
+          dot={false}
+          connectNulls={false}
+          isAnimationActive
+          animationDuration={520}
+          name="actual"
+        />
+        <Line
+          type="monotone"
+          dataKey="mean"
+          stroke="#c74722"
+          strokeWidth={2.2}
+          strokeDasharray="6 5"
+          dot={false}
+          connectNulls={false}
+          isAnimationActive={false}
+          name="projected"
+        />
+      </ComposedChart>
+    </ResponsiveContainer>
+  );
+}
+
 /* --- router ------------------------------------------------------------ */
 
 export default function Chart({ finding }: { finding: Finding }) {
@@ -673,6 +795,8 @@ export default function Chart({ finding }: { finding: Finding }) {
       return <SegmentChart finding={finding} />;
     case "correlation_heatmap":
       return <CorrelationChart finding={finding} />;
+    case "forecast_fan":
+      return <ForecastChart finding={finding} />;
     default:
       // A finding type whose chart is not built yet still shows its sentence
       // rather than an empty frame or a wrong picture.
