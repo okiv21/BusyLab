@@ -34,7 +34,7 @@ export default function QualityHold({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4 }}
       style={{
-        padding: "48px 60px 60px",
+        padding: "var(--pad-section)",
         display: "flex",
         flexDirection: "column",
         gap: 22,

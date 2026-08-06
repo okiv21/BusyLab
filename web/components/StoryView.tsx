@@ -69,7 +69,7 @@ export default function StoryView({
   return (
     <section
       style={{
-        padding: "40px 60px 48px",
+        padding: "var(--pad-section)",
         display: "flex",
         flexDirection: "column",
         gap: 22,

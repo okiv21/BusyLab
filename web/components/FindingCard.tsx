@@ -17,6 +17,7 @@ import { motion } from "framer-motion";
 import Chart from "./charts/Chart";
 import type { Finding } from "@/lib/types";
 import { percent } from "@/lib/format";
+import { entrance, useCountUp, usePrefersReducedMotion } from "@/lib/motion";
 
 const TONE: Record<
   string,
@@ -40,21 +41,23 @@ export default function FindingCard({
   onDrill?: (finding: Finding) => void;
 }) {
   const [showEvidence, setShowEvidence] = useState(false);
+  const reduced = usePrefersReducedMotion();
   const tone = TONE[finding.severity] ?? TONE.neutral;
 
   return (
     <motion.article
-      initial={{ opacity: 0, y: 14 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: "-60px" }}
-      transition={{ duration: 0.45, delay: Math.min(index * 0.04, 0.2) }}
+      {...entrance(index, reduced)}
       style={{
         background: hero
           ? "linear-gradient(180deg, #fff8f4, #fff3ec)"
           : "var(--white)",
         border: hero ? "1.5px solid #f3d9cc" : "1px solid var(--line)",
         borderRadius: hero ? "var(--radius-hero)" : "var(--radius-card)",
-        boxShadow: hero ? "var(--shadow-hero)" : "var(--shadow-card)",
+        // One hero moment per story (spec 7). The glow is the flair, and it
+        // appears on exactly one card so the rest stays calm and it lands.
+        boxShadow: hero
+          ? "var(--shadow-hero), 0 0 0 1px rgba(232,90,50,0.08), 0 0 60px -12px rgba(232,90,50,0.28)"
+          : "var(--shadow-card)",
         padding: hero ? "28px 30px" : "24px 28px",
         display: "flex",
         flexDirection: "column",
@@ -223,18 +226,11 @@ function HeroHeadline({ finding }: { finding: Finding }) {
     >
       {big && (
         <div style={{ flex: "0 0 auto" }}>
-          <motion.div
-            initial={{ opacity: 0, scale: 0.85 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-            style={{
-              font: "800 58px/1 var(--font-display)",
-              letterSpacing: "-0.03em",
-              color: big.tone,
-            }}
-          >
-            {big.value}
-          </motion.div>
+          <CountingNumber
+            magnitude={big.magnitude}
+            render={big.render}
+            tone={big.tone}
+          />
           <div
             style={{
               fontSize: 13,
@@ -262,39 +258,80 @@ function HeroHeadline({ finding }: { finding: Finding }) {
 }
 
 /**
+ * The headline number, counted up (spec 7: "numbers count up").
+ *
+ * The count is driven from the raw magnitude and formatted every frame, rather
+ * than animating a pre-formatted string, so "-44%" arrives by counting through
+ * the percentages instead of scrambling characters.
+ */
+function CountingNumber({
+  magnitude,
+  render,
+  tone,
+}: {
+  magnitude: number;
+  render: (value: number) => string;
+  tone: string;
+}) {
+  const value = useCountUp(magnitude);
+  return (
+    <div
+      style={{
+        font: "800 58px/1 var(--font-display)",
+        letterSpacing: "-0.03em",
+        color: tone,
+        fontVariantNumeric: "tabular-nums",
+      }}
+    >
+      {render(value)}
+    </div>
+  );
+}
+
+/**
  * Pull the one number worth setting large.
  *
  * Reads only from facts the engine computed. If a finding has no single
  * headline number, none is invented and the sentence carries the card.
+ * `magnitude` is the raw value so it can be counted; `render` formats it.
  */
-function pickHeadlineNumber(
-  finding: Finding
-): { value: string; caption: string; tone: string } | null {
+function pickHeadlineNumber(finding: Finding): {
+  magnitude: number;
+  render: (value: number) => string;
+  caption: string;
+  tone: string;
+} | null {
   const f = finding.facts ?? {};
+
   if (typeof f.change_pct === "number") {
+    const sign = f.change_pct < 0 ? "−" : "+";
     return {
-      value: `${f.change_pct < 0 ? "−" : "+"}${percent(f.change_pct)}`,
+      magnitude: Math.abs(f.change_pct),
+      render: (v) => `${sign}${percent(v)}`,
       caption: `revenue, ${f.periods ?? ""} periods`.trim(),
       tone: f.change_pct < 0 ? "#c74722" : "#177e5b",
     };
   }
   if (typeof f.top1_share === "number") {
     return {
-      value: percent(f.top1_share),
+      magnitude: f.top1_share,
+      render: (v) => percent(v),
       caption: `of ${f.metric ?? "revenue"} from one product`,
       tone: "#c74722",
     };
   }
   if (typeof f.margin === "number") {
     return {
-      value: percent(f.margin),
+      magnitude: Math.abs(f.margin),
+      render: (v) => percent(v),
       caption: "margin",
       tone: f.margin < 0 ? "#c74722" : "#177e5b",
     };
   }
   if (typeof f.driver_share_of_change === "number") {
     return {
-      value: percent(f.driver_share_of_change),
+      magnitude: f.driver_share_of_change,
+      render: (v) => percent(v),
       caption: `of the move is ${f.driver ?? "one slice"}`,
       tone: "#c74722",
     };

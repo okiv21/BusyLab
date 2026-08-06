@@ -52,7 +52,7 @@ fully without any model configured.
 | 8. Customer intelligence and goals | **done** (Pillars 3 and 4) |
 | 9. Monitoring and alerts | **done** (anomalies, digest, scheduler) |
 | 10. Present mode and exports | **done** |
-| 11. Polish pass | not started |
+| 11. Polish pass | **done** |
 
 ## Getting started
 
@@ -197,6 +197,34 @@ Implemented (Pillar 0, the non-obvious layer):
   so `check_non_directive` enforces it mechanically over every summary and the
   test suite fails on a violation. Directive AI carries liability; illuminating
   AI is trusted.
+
+## The polish layer
+
+Decoupled from the engine and done last, as spec 10 asks. Spec 7's rule is that
+restraint reads as premium, so this is targeted rather than decorative.
+
+- **Entrance animation runs once**, about half a second. Roughly 80% of the
+  "cool" for very little cost.
+- **Numbers count up**, eased out rather than linear - a linear counter reads
+  like a loading spinner, decelerating reads like a value arriving and settling.
+  The count drives the raw magnitude and formats every frame, so "-44%" counts
+  through the percentages instead of scrambling characters. Tabular figures stop
+  the width jittering as digits change.
+- **One hero moment.** Exactly one card gets a soft accent glow; everything
+  else stays calm so it lands.
+- **Hover highlights the point and dims the rest.** Dimming the others rather
+  than brightening the hovered one keeps the weight of the picture steady -
+  raising one element makes a chart appear to flicker as the pointer travels.
+  On the donut the centre figure follows the pointer, so hovering answers a
+  question rather than just lighting something up.
+- **`prefers-reduced-motion` is honoured in JavaScript, not only CSS.** Worth
+  being explicit: the stylesheet zeroes CSS durations, but Framer Motion and
+  the count-up write inline styles frame by frame, so a CSS rule cannot reach
+  them. The media query is read directly and the animation is skipped.
+- **Responsive padding.** Section padding is a custom property rather than a
+  fixed value, because inline styles beat a stylesheet rule but happily read a
+  variable - which is the one lever that shrinks a 60px gutter to 16px on a
+  phone.
 
 ## Present mode and exports
 

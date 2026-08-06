@@ -53,7 +53,7 @@ export default function UploadPage() {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4 }}
           style={{
-            padding: "68px 60px 76px",
+            padding: "var(--pad-section)",
             display: "flex",
             flexDirection: "column",
             alignItems: "center",

@@ -40,7 +40,7 @@ export default function ColumnCheck({
       initial={{ opacity: 0, y: 14 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4 }}
-      style={{ padding: "46px 60px 60px", display: "flex", flexDirection: "column", gap: 24 }}
+      style={{ padding: "var(--pad-section)", display: "flex", flexDirection: "column", gap: 24 }}
     >
       <div>
         <h2 style={{ font: "700 26px var(--font-display)" }}>

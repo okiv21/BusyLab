@@ -30,8 +30,38 @@ import {
   YAxis,
   ZAxis,
 } from "recharts";
+import { useState } from "react";
 import type { Finding } from "@/lib/types";
 import { compact, money, percent } from "@/lib/format";
+import { CHART_MS } from "@/lib/motion";
+
+/**
+ * Hover state for the "highlight the point, dim the rest" micro-interaction
+ * (spec 7). Returns the opacity a given index should take: full when nothing
+ * is hovered or when this is the hovered one, faded otherwise.
+ *
+ * Dimming the others rather than brightening the hovered one is deliberate.
+ * Raising one element makes the chart appear to flicker as the pointer
+ * travels; lowering the rest keeps the overall weight of the picture steady.
+ */
+function useHoverFocus() {
+  const [active, setActive] = useState<number | null>(null);
+  const opacityFor = (index: number) =>
+    active === null || active === index ? 1 : 0.32;
+
+  /**
+   * Props for a plain wrapper around the chart, which is what actually clears
+   * the focus. Recharts' own `onMouseLeave` does not fire reliably when the
+   * pointer exits the chart area, and without a reset the chart stays dimmed
+   * forever after one hover — worse than having no interaction at all.
+   */
+  const reset = {
+    onMouseLeave: () => setActive(null),
+    onBlur: () => setActive(null),
+  };
+
+  return { active, setActive, opacityFor, reset };
+}
 
 const ACCENT = "#e85a32";
 const ACCENT_SOFT = "#f6d5c8";
@@ -145,9 +175,11 @@ function RankingChart({ finding }: { finding: Finding }) {
     label: string;
     value: number;
   }[];
+  const { setActive, opacityFor, reset } = useHoverFocus();
   if (!bars.length) return <Empty label="No products to compare." />;
 
   return (
+    <div {...reset}>
     <ResponsiveContainer width="100%" height={Math.max(150, bars.length * 38)}>
       <BarChart
         data={bars}
@@ -162,14 +194,29 @@ function RankingChart({ finding }: { finding: Finding }) {
           width={128}
           tick={{ fill: "#211c15", fontSize: 13, fontFamily: "Albert Sans" }}
         />
-        <Tooltip {...tooltipStyle} formatter={(v: number) => [money(v), "revenue"]} />
-        <Bar dataKey="value" radius={[6, 6, 6, 6]} animationDuration={520}>
+        <Tooltip
+          {...tooltipStyle}
+          cursor={{ fill: "rgba(232,90,50,0.05)" }}
+          formatter={(v: number) => [money(v), "revenue"]}
+        />
+        <Bar
+          dataKey="value"
+          radius={[6, 6, 6, 6]}
+          animationDuration={CHART_MS}
+          onMouseEnter={(_: unknown, i: number) => setActive(i)}
+        >
           {bars.map((_, i) => (
-            <Cell key={i} fill={RAMP[Math.min(i, RAMP.length - 1)]} />
+            <Cell
+              key={i}
+              fill={RAMP[Math.min(i, RAMP.length - 1)]}
+              fillOpacity={opacityFor(i)}
+              style={{ transition: "fill-opacity 0.2s" }}
+            />
           ))}
         </Bar>
       </BarChart>
     </ResponsiveContainer>
+    </div>
   );
 }
 
@@ -181,6 +228,7 @@ function ConcentrationChart({ finding }: { finding: Finding }) {
     value: number;
     share: number;
   }[];
+  const { active, setActive, opacityFor, reset } = useHoverFocus();
   if (!slices.length) return <Empty label="Nothing to break down." />;
 
   if (finding.chart === "treemap") {
@@ -205,7 +253,10 @@ function ConcentrationChart({ finding }: { finding: Finding }) {
   const leader = slices[0];
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 34, flexWrap: "wrap" }}>
-      <div style={{ position: "relative", width: 190, height: 190, flex: "0 0 auto" }}>
+      <div
+        {...reset}
+        style={{ position: "relative", width: 190, height: 190, flex: "0 0 auto" }}
+      >
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
@@ -219,9 +270,16 @@ function ConcentrationChart({ finding }: { finding: Finding }) {
               endAngle={-270}
               animationDuration={620}
               stroke="none"
+              onMouseEnter={(_: unknown, i: number) => setActive(i)}
+              onMouseLeave={() => setActive(null)}
             >
               {slices.map((_, i) => (
-                <Cell key={i} fill={RAMP[Math.min(i, RAMP.length - 1)]} />
+                <Cell
+                  key={i}
+                  fill={RAMP[Math.min(i, RAMP.length - 1)]}
+                  fillOpacity={opacityFor(i)}
+                  style={{ transition: "fill-opacity 0.2s" }}
+                />
               ))}
             </Pie>
             <Tooltip {...tooltipStyle} formatter={(v: number) => money(v)} />
@@ -236,12 +294,29 @@ function ConcentrationChart({ finding }: { finding: Finding }) {
             pointerEvents: "none",
           }}
         >
+          {/* The centre follows the pointer, so hovering answers a question
+              rather than just lighting something up. */}
           <div style={{ textAlign: "center" }}>
-            <div style={{ font: "800 30px Sora", color: "#211c15" }}>
-              {percent(leader.share)}
+            <div
+              style={{
+                font: "800 30px Sora",
+                color: "#211c15",
+                fontVariantNumeric: "tabular-nums",
+              }}
+            >
+              {percent((active !== null ? slices[active] : leader).share)}
             </div>
-            <div style={{ fontSize: 11, color: INK_LIGHT }}>
-              of {finding.facts?.metric ?? "total"}
+            <div
+              style={{
+                fontSize: 11,
+                color: INK_LIGHT,
+                maxWidth: 112,
+                margin: "0 auto",
+              }}
+            >
+              {active !== null
+                ? slices[active].label
+                : `of ${finding.facts?.metric ?? "total"}`}
             </div>
           </div>
         </div>
@@ -545,31 +620,48 @@ function SegmentChart({ finding }: { finding: Finding }) {
     label: string;
     value: number;
   }[];
+  const { setActive, opacityFor, reset } = useHoverFocus();
   if (!groups.length) return <Empty label="No groups to compare." />;
 
   return (
-    <ResponsiveContainer width="100%" height={Math.max(160, groups.length * 44)}>
-      <BarChart
-        data={groups}
-        layout="vertical"
-        margin={{ top: 4, right: 56, bottom: 4, left: 8 }}
-      >
-        <XAxis type="number" hide />
-        <YAxis
-          type="category"
-          dataKey="label"
-          {...axis}
-          width={120}
-          tick={{ fill: "#211c15", fontSize: 13, fontFamily: "Albert Sans" }}
-        />
-        <Tooltip {...tooltipStyle} formatter={(v: number) => [money(v), "average"]} />
-        <Bar dataKey="value" radius={[6, 6, 6, 6]} animationDuration={520}>
-          {groups.map((_, i) => (
-            <Cell key={i} fill={RAMP[Math.min(i, RAMP.length - 1)]} />
-          ))}
-        </Bar>
-      </BarChart>
-    </ResponsiveContainer>
+    <div {...reset}>
+      <ResponsiveContainer width="100%" height={Math.max(160, groups.length * 44)}>
+        <BarChart
+          data={groups}
+          layout="vertical"
+          margin={{ top: 4, right: 56, bottom: 4, left: 8 }}
+        >
+          <XAxis type="number" hide />
+          <YAxis
+            type="category"
+            dataKey="label"
+            {...axis}
+            width={120}
+            tick={{ fill: "#211c15", fontSize: 13, fontFamily: "Albert Sans" }}
+          />
+          <Tooltip
+            {...tooltipStyle}
+            cursor={{ fill: "rgba(232,90,50,0.05)" }}
+            formatter={(v: number) => [money(v), "average"]}
+          />
+          <Bar
+            dataKey="value"
+            radius={[6, 6, 6, 6]}
+            animationDuration={CHART_MS}
+            onMouseEnter={(_: unknown, i: number) => setActive(i)}
+          >
+            {groups.map((_, i) => (
+              <Cell
+                key={i}
+                fill={RAMP[Math.min(i, RAMP.length - 1)]}
+                fillOpacity={opacityFor(i)}
+                style={{ transition: "fill-opacity 0.2s" }}
+              />
+            ))}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 
