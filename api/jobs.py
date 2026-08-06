@@ -18,6 +18,7 @@ driver swap rather than a redesign.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import threading
 import time
@@ -181,6 +182,22 @@ class JobStore:
                 (dataset_id, filename, path, _now()),
             )
         return dataset_id
+
+    def set_dataset_path(self, dataset_id: str, path: str) -> None:
+        """Record where the upload was stored.
+
+        A method rather than the API reaching into the connection directly, so
+        the Postgres store can satisfy the same interface.
+        """
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE datasets SET path = ? WHERE id = ?", (path, dataset_id)
+            )
+
+    def delete_dataset(self, dataset_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM datasets WHERE id = ?", (dataset_id,))
+            conn.execute("DELETE FROM jobs WHERE dataset_id = ?", (dataset_id,))
 
     def get_dataset(self, dataset_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
@@ -471,6 +488,22 @@ class JobStore:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+
+
+def open_store(dsn: str | None = None, sqlite_path: str | Path | None = None):
+    """Open whichever store this environment calls for.
+
+    Postgres when a ``DATABASE_URL`` is present, SQLite otherwise. Spec 8 puts
+    production on Supabase Postgres; SQLite stays for development because it is
+    one fewer service to run, and it must not go to production here because a
+    free Render instance's disk is wiped on every spin-down.
+    """
+    dsn = dsn if dsn is not None else os.environ.get("DATABASE_URL", "")
+    if dsn:
+        from .pg import PostgresJobStore
+
+        return PostgresJobStore(dsn)
+    return JobStore(sqlite_path or os.environ.get("BUSYLAB_DB", "busylab.db"))
 
 
 class Worker:

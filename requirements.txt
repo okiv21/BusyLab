@@ -1,0 +1,23 @@
+# Production dependencies, pinned.
+#
+# Written by hand rather than `pip freeze`: a freeze pins the entire transitive
+# world plus every dev-only package, which makes the build slower, larger and
+# harder to reason about. Memory and install size are the deployment constraint
+# (spec 9), so this is only what the API and worker actually import.
+#
+# uvicorn without [standard] on purpose - those extras pull in httptools and
+# uvloop, neither of which earns its build time on a free instance.
+
+pandas==2.3.3
+numpy==2.2.6
+scipy==1.15.3
+statsmodels==0.14.6
+openpyxl==3.1.5
+python-dateutil==2.9.0.post0
+reportlab==5.0.0
+python-pptx==1.0.2
+fastapi==0.141.1
+uvicorn==0.52.0
+python-multipart==0.0.32
+psycopg[binary]==3.3.4
+psycopg-pool==3.3.1

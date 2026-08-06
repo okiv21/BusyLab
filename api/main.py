@@ -26,12 +26,14 @@ from busylab.narration import from_env, narrate, route_question
 from busylab.narration.routing import answer_from_findings
 
 from .handlers import build_handlers
-from .jobs import JobKind, JobStore, JobStatus, Worker
+from .jobs import JobKind, JobStatus, Worker, open_store
+from .storage import StorageError, store_from_env
 
-#: Where uploads land. Supabase Storage in production; never the Render disk,
-#: which is ephemeral (spec 8).
-STORAGE_DIR = Path(os.environ.get("BUSYLAB_STORAGE", "storage"))
-DB_PATH = os.environ.get("BUSYLAB_DB", "busylab.db")
+#: Where uploads land, and where jobs live. Both are abstractions because a
+#: free Render instance has an ephemeral disk: it spins down and comes back
+#: with the filesystem empty. Local implementations are for development only
+#: (spec 8: never the Render disk).
+FILES = store_from_env()
 
 #: Accepted input is structured tabular data only (spec 3.1).
 ALLOWED_SUFFIXES = {".xlsx", ".xlsm", ".xls", ".csv", ".tsv"}
@@ -60,27 +62,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-_store: JobStore | None = None
+_store = None
 _worker: Worker | None = None
 
 
-def get_store() -> JobStore:
+def get_store():
     global _store
     if _store is None:
-        _store = JobStore(DB_PATH)
+        _store = open_store()
     return _store
 
 
 def get_worker() -> Worker:
     global _worker
     if _worker is None:
-        _worker = Worker(get_store(), build_handlers())
+        _worker = Worker(get_store(), build_handlers(FILES))
     return _worker
 
 
 @app.on_event("startup")
 def _startup() -> None:
-    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
     get_store()
     # In production this is a separate Render background worker so heavy jobs
     # never block the API. In development one process is simpler.
@@ -124,7 +125,7 @@ class AskRequest(BaseModel):
 
 
 @app.get("/health")
-def health(store: JobStore = Depends(get_store)) -> dict[str, Any]:
+def health(store = Depends(get_store)) -> dict[str, Any]:
     return {
         "ok": True,
         "version": __version__,
@@ -135,7 +136,7 @@ def health(store: JobStore = Depends(get_store)) -> dict[str, Any]:
 
 @app.post("/uploads", response_model=JobRef, status_code=202)
 async def upload(
-    file: UploadFile = File(...), store: JobStore = Depends(get_store)
+    file: UploadFile = File(...), store = Depends(get_store)
 ) -> JobRef:
     """Accept a spreadsheet and hand detection to the queue.
 
@@ -152,31 +153,33 @@ async def upload(
             ),
         )
 
-    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
     dataset_id = store.create_dataset(file.filename or "upload", "")
-    target = STORAGE_DIR / f"{dataset_id}{suffix}"
+    key = f"{dataset_id}{suffix}"
 
+    # Read with a running size check so an oversized upload is refused before
+    # it is stored anywhere, rather than after.
+    chunks: list[bytes] = []
     size = 0
-    with target.open("wb") as out:
-        while chunk := await file.read(1024 * 1024):
-            size += len(chunk)
-            if size > MAX_UPLOAD_BYTES:
-                out.close()
-                target.unlink(missing_ok=True)
-                raise HTTPException(status_code=413, detail="That file is too large.")
-            out.write(chunk)
+    while chunk := await file.read(1024 * 1024):
+        size += len(chunk)
+        if size > MAX_UPLOAD_BYTES:
+            store.delete_dataset(dataset_id)
+            raise HTTPException(status_code=413, detail="That file is too large.")
+        chunks.append(chunk)
 
-    with store._connect() as conn:  # noqa: SLF001 - same module family
-        conn.execute(
-            "UPDATE datasets SET path = ? WHERE id = ?", (str(target), dataset_id)
-        )
+    try:
+        FILES.put(key, b"".join(chunks))
+    except StorageError as exc:
+        store.delete_dataset(dataset_id)
+        raise HTTPException(status_code=503, detail=f"Could not store the file: {exc}")
 
+    store.set_dataset_path(dataset_id, key)
     job = store.enqueue(JobKind.DETECT, dataset_id)
     return JobRef(job_id=job.id, dataset_id=dataset_id, status=job.status.value)
 
 
 @app.get("/jobs/{job_id}")
-def job_status(job_id: str, store: JobStore = Depends(get_store)) -> dict[str, Any]:
+def job_status(job_id: str, store = Depends(get_store)) -> dict[str, Any]:
     """Poll a job. The frontend drives its progress screen from this."""
     job = store.get(job_id)
     if job is None:
@@ -189,7 +192,7 @@ def job_status(job_id: str, store: JobStore = Depends(get_store)) -> dict[str, A
 
 @app.get("/datasets/{dataset_id}/columns")
 def get_columns(
-    dataset_id: str, store: JobStore = Depends(get_store)
+    dataset_id: str, store = Depends(get_store)
 ) -> dict[str, Any]:
     """What the detector understood, and what it still needs to ask."""
     dataset = store.get_dataset(dataset_id)
@@ -204,7 +207,7 @@ def get_columns(
 def confirm_columns(
     dataset_id: str,
     body: ConfirmRequest,
-    store: JobStore = Depends(get_store),
+    store = Depends(get_store),
 ) -> JobRef:
     """Accept the user's answers and queue the analysis."""
     dataset = store.get_dataset(dataset_id)
@@ -227,7 +230,7 @@ def confirm_columns(
 
 
 @app.get("/datasets/{dataset_id}/story")
-def get_story(dataset_id: str, store: JobStore = Depends(get_store)) -> dict[str, Any]:
+def get_story(dataset_id: str, store = Depends(get_store)) -> dict[str, Any]:
     """The ranked narrative: findings in order, each with its chart."""
     dataset = store.get_dataset(dataset_id)
     if dataset is None:
@@ -240,7 +243,7 @@ def get_story(dataset_id: str, store: JobStore = Depends(get_store)) -> dict[str
 
 @app.post("/datasets/{dataset_id}/ask")
 def ask(
-    dataset_id: str, body: AskRequest, store: JobStore = Depends(get_store)
+    dataset_id: str, body: AskRequest, store = Depends(get_store)
 ) -> dict[str, Any]:
     """Drill down by asking a question.
 
@@ -323,7 +326,7 @@ def _rebuild_findings(story: dict[str, Any]) -> list:
 
 @app.get("/datasets/{dataset_id}/export.{fmt}")
 def export_story(
-    dataset_id: str, fmt: str, store: JobStore = Depends(get_store)
+    dataset_id: str, fmt: str, store = Depends(get_store)
 ) -> Response:
     """Download the story as a PDF or a slide deck (spec Pillar 6).
 
@@ -378,7 +381,7 @@ def export_story(
 def list_alerts(
     dataset_id: str,
     include_acknowledged: bool = False,
-    store: JobStore = Depends(get_store),
+    store = Depends(get_store),
 ) -> dict[str, Any]:
     """What BusyLab noticed without being asked (spec Pillar 2)."""
     if store.get_dataset(dataset_id) is None:
@@ -388,7 +391,7 @@ def list_alerts(
 
 @app.post("/datasets/{dataset_id}/alerts/{key}/acknowledge", status_code=204)
 def acknowledge_alert(
-    dataset_id: str, key: str, store: JobStore = Depends(get_store)
+    dataset_id: str, key: str, store = Depends(get_store)
 ) -> None:
     if not store.acknowledge_alert(dataset_id, key):
         raise HTTPException(status_code=404, detail="No such alert.")
@@ -396,7 +399,7 @@ def acknowledge_alert(
 
 @app.get("/datasets/{dataset_id}/digest")
 def preview_digest(
-    dataset_id: str, store: JobStore = Depends(get_store)
+    dataset_id: str, store = Depends(get_store)
 ) -> dict[str, Any]:
     """The business-in-review digest, rendered but not sent."""
     dataset = store.get_dataset(dataset_id)
@@ -436,7 +439,7 @@ SCHEDULER_TOKEN = os.environ.get("BUSYLAB_SCHEDULER_TOKEN", "")
 @app.post("/internal/tick", status_code=202)
 def scheduled_tick(
     token: str = "",
-    store: JobStore = Depends(get_store),
+    store = Depends(get_store),
 ) -> dict[str, Any]:
     """Re-analyse every known dataset, so monitoring is proactive.
 
@@ -475,7 +478,7 @@ class GoalRequest(BaseModel):
 
 @app.get("/datasets/{dataset_id}/goals")
 def list_goals(
-    dataset_id: str, store: JobStore = Depends(get_store)
+    dataset_id: str, store = Depends(get_store)
 ) -> dict[str, Any]:
     if store.get_dataset(dataset_id) is None:
         raise HTTPException(status_code=404, detail="No such dataset.")
@@ -484,7 +487,7 @@ def list_goals(
 
 @app.post("/datasets/{dataset_id}/goals", status_code=201)
 def create_goal(
-    dataset_id: str, body: GoalRequest, store: JobStore = Depends(get_store)
+    dataset_id: str, body: GoalRequest, store = Depends(get_store)
 ) -> dict[str, Any]:
     """Set a target, and re-run the analysis so the story includes it."""
     if store.get_dataset(dataset_id) is None:
@@ -516,7 +519,7 @@ def create_goal(
 
 @app.delete("/datasets/{dataset_id}/goals/{goal_id}", status_code=202)
 def delete_goal(
-    dataset_id: str, goal_id: str, store: JobStore = Depends(get_store)
+    dataset_id: str, goal_id: str, store = Depends(get_store)
 ) -> dict[str, Any]:
     if not store.delete_goal(dataset_id, goal_id):
         raise HTTPException(status_code=404, detail="No such goal.")
@@ -525,7 +528,7 @@ def delete_goal(
 
 
 @app.delete("/datasets/{dataset_id}", status_code=204)
-def delete_dataset(dataset_id: str, store: JobStore = Depends(get_store)) -> None:
+def delete_dataset(dataset_id: str, store = Depends(get_store)) -> None:
     """Remove an upload and its raw file.
 
     Raw files accumulate and storage is where cost bites second (spec 9), so
@@ -534,9 +537,7 @@ def delete_dataset(dataset_id: str, store: JobStore = Depends(get_store)) -> Non
     dataset = store.get_dataset(dataset_id)
     if dataset is None:
         raise HTTPException(status_code=404, detail="No such dataset.")
-    path = Path(dataset["path"])
-    if path.exists():
-        path.unlink()
-    with store._connect() as conn:  # noqa: SLF001
-        conn.execute("DELETE FROM datasets WHERE id = ?", (dataset_id,))
-        conn.execute("DELETE FROM jobs WHERE dataset_id = ?", (dataset_id,))
+    key = dataset.get("path") or ""
+    if key:
+        FILES.delete(key)
+    store.delete_dataset(dataset_id)

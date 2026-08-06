@@ -433,12 +433,14 @@ def client(tmp_path, monkeypatch):
     from api import main
     from api.handlers import build_handlers
     from api.jobs import JobStore, Worker
+    from api.storage import LocalFileStore
 
+    files = LocalFileStore(root=tmp_path / "storage")
     store = JobStore(tmp_path / "alerts.db")
-    worker = Worker(store, build_handlers())
+    worker = Worker(store, build_handlers(files))
     monkeypatch.setattr(main, "_store", store)
     monkeypatch.setattr(main, "_worker", worker)
-    monkeypatch.setattr(main, "STORAGE_DIR", tmp_path / "storage")
+    monkeypatch.setattr(main, "FILES", files)
     monkeypatch.setattr(main, "SCHEDULER_TOKEN", "test-token")
 
     with TestClient(main.app) as test_client:

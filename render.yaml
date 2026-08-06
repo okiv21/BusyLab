@@ -1,0 +1,72 @@
+# Render blueprint: a thin API and a separate background worker.
+#
+# Spec 9's architecture split. The worker is its own service so heavy jobs -
+# detection, significance testing, ARIMA - never block an HTTP request. Both
+# read the same Supabase Postgres and the same Supabase Storage bucket, because
+# Render's own disk is ephemeral and loses everything on spin-down.
+#
+# Secrets are marked sync:false, which means Render prompts for them rather
+# than reading them from this file. Nothing sensitive belongs in the repository.
+
+services:
+  - type: web
+    name: busylab-api
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      # The web service must not also run a worker, or jobs get claimed by
+      # whichever process wins and the API stalls behind an analysis.
+      - key: BUSYLAB_INLINE_WORKER
+        value: "0"
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: uploads
+      # The deployed frontend origin. A trailing slash breaks the match.
+      - key: BUSYLAB_CORS
+        sync: false
+      - key: BUSYLAB_SCHEDULER_TOKEN
+        sync: false
+      # Optional. Without it the engine's own wording is used.
+      - key: GROQ_API_KEY
+        sync: false
+
+  - type: worker
+    name: busylab-worker
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: python worker.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: uploads
+      - key: GROQ_API_KEY
+        sync: false
+      # Digest delivery. Unset means the digest is logged, not sent.
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false

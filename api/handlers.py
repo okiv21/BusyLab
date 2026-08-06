@@ -8,6 +8,7 @@ wrapper around the engine, never the reverse).
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ from busylab.narration import from_env, narrate, suggest_chips
 from busylab.roles import ROLE_SPECS, TIER_SPECS, Role
 
 from .jobs import Job, JobStore
+from .storage import FileStore, store_from_env
 
 
 def _prompt_to_dict(prompt: ConfirmationPrompt) -> dict[str, Any]:
@@ -84,11 +86,37 @@ def detection_to_dict(result: DetectionResult, rows: int) -> dict[str, Any]:
     }
 
 
-def _load(store: JobStore, dataset_id: str):
+def _load(store: JobStore, dataset_id: str, files: FileStore):
+    """Fetch a dataset's bytes and parse them.
+
+    The file store is passed in rather than rebuilt here. Deriving it from the
+    environment inside the handler would give the worker a different store from
+    the one the API is writing to - which happens to work in production, where
+    both read the same variables, and is simply wrong.
+
+    Bytes come from that store rather than the filesystem, because in
+    production they live in Supabase and there is no local path at all. The
+    temporary file exists only because pandas reads paths.
+    """
     dataset = store.get_dataset(dataset_id)
     if dataset is None:
         raise ValueError(f"Unknown dataset {dataset_id}")
-    frame, report = loading.load(Path(dataset["path"]))
+
+    key = dataset.get("path") or ""
+    if not key:
+        raise ValueError("This dataset has no stored file.")
+
+    suffix = Path(key).suffix or ".xlsx"
+
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as handle:
+        handle.write(files.get(key))
+        temp_path = Path(handle.name)
+
+    try:
+        frame, report = loading.load(temp_path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
     if frame.empty:
         raise ValueError("No usable table was found in this file.")
     return dataset, frame, report
@@ -105,10 +133,10 @@ def _overrides_from(raw: dict[str, str] | None) -> dict[str, Role]:
     return out
 
 
-def handle_detect(job: Job, store: JobStore) -> dict[str, Any]:
+def handle_detect(job: Job, store: JobStore, files: FileStore) -> dict[str, Any]:
     """Read the file and work out what its columns mean."""
     store.set_step(job.id, "reading the file")
-    dataset, frame, report = _load(store, job.dataset_id)
+    dataset, frame, report = _load(store, job.dataset_id, files)
 
     store.set_step(job.id, "checking the columns")
     overrides = _overrides_from(dataset.get("overrides"))
@@ -138,10 +166,10 @@ def handle_detect(job: Job, store: JobStore) -> dict[str, Any]:
     return payload
 
 
-def handle_analyse(job: Job, store: JobStore) -> dict[str, Any]:
+def handle_analyse(job: Job, store: JobStore, files: FileStore) -> dict[str, Any]:
     """Run the analysis and narrate it."""
     store.set_step(job.id, "cleaning up the rows")
-    dataset, frame, _ = _load(store, job.dataset_id)
+    dataset, frame, _ = _load(store, job.dataset_id, files)
 
     overrides = _overrides_from(dataset.get("overrides"))
     result = detect(frame, overrides=overrides)
@@ -228,11 +256,17 @@ def handle_analyse(job: Job, store: JobStore) -> dict[str, Any]:
     return payload
 
 
-HANDLERS = {}
+def build_handlers(files: FileStore | None = None) -> dict:
+    """Wire job kinds to their handlers, bound to a file store.
 
-
-def build_handlers() -> dict:
-    """Wire job kinds to their handlers, imported lazily to avoid cycles."""
+    The store is bound here so the worker and the API always share one, which
+    is what makes the whole thing testable against a temporary directory.
+    """
     from .jobs import JobKind
 
-    return {JobKind.DETECT: handle_detect, JobKind.ANALYSE: handle_analyse}
+    resolved = files if files is not None else store_from_env()
+
+    return {
+        JobKind.DETECT: lambda job, store: handle_detect(job, store, resolved),
+        JobKind.ANALYSE: lambda job, store: handle_analyse(job, store, resolved),
+    }

@@ -53,6 +53,7 @@ fully without any model configured.
 | 9. Monitoring and alerts | **done** (anomalies, digest, scheduler) |
 | 10. Present mode and exports | **done** |
 | 11. Polish pass | **done** |
+| Deployment | **configured**; needs your accounts |
 
 ## Getting started
 
@@ -197,6 +198,25 @@ Implemented (Pillar 0, the non-obvious layer):
   so `check_non_directive` enforces it mechanically over every summary and the
   test suite fails on a violation. Directive AI carries liability; illuminating
   AI is trusted.
+
+## Deploying
+
+See **[DEPLOY.md](DEPLOY.md)** for the full walkthrough. Short version:
+Supabase for Postgres and file storage, Render for the API and a separate
+worker, Vercel for the frontend, GitHub Actions for the cron. All free tiers.
+
+The one thing worth knowing before you start: **Render's disk is ephemeral.**
+It spins down after inactivity and comes back empty, so SQLite and a local
+uploads folder would silently lose every dataset overnight while appearing to
+work. That is why the store and the file location are both abstractions -
+SQLite and a folder locally, Postgres and Supabase Storage in production, with
+the same interface either way.
+
+A contract test runs the same assertions against both backends
+(`tests/test_stores.py`), plus a static check that the two expose identical
+method signatures, so they cannot drift. The Postgres half skips unless
+`TEST_DATABASE_URL` is set - point it at your Supabase project once it exists
+and the whole contract runs for real.
 
 ## The polish layer
 

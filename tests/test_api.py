@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from api import jobs as jobs_module
 from api.handlers import build_handlers
 from api.jobs import JobStore, Worker
+from api.storage import LocalFileStore
 
 from . import fixtures
 
@@ -28,12 +29,13 @@ def client(tmp_path, monkeypatch):
 
     from api import main
 
+    files = LocalFileStore(root=tmp_path / "storage")
     store = JobStore(tmp_path / "test.db")
-    worker = Worker(store, build_handlers())
+    worker = Worker(store, build_handlers(files))
 
     monkeypatch.setattr(main, "_store", store)
     monkeypatch.setattr(main, "_worker", worker)
-    monkeypatch.setattr(main, "STORAGE_DIR", tmp_path / "storage")
+    monkeypatch.setattr(main, "FILES", files)
 
     with TestClient(main.app) as test_client:
         test_client.worker = worker
@@ -378,16 +380,22 @@ def test_a_bad_refresh_is_held_rather_than_published(client, tmp_path) -> None:
 
 
 def test_dataset_can_be_deleted_with_its_raw_file(client, clean_file) -> None:
-    """Raw files accumulate and storage is where cost bites (spec 9)."""
+    """Raw files accumulate and storage is where cost bites (spec 9).
+
+    The dataset's ``path`` is a key into the file store now, not a filesystem
+    path - in production the bytes live in Supabase and there is no local file
+    at all - so the store is what gets asked.
+    """
     upload = _upload(client, clean_file)
     client.worker.drain()
-    path = client.store.get_dataset(upload["dataset_id"])["path"]
 
-    from pathlib import Path
+    from api import main
 
-    assert Path(path).exists()
+    key = client.store.get_dataset(upload["dataset_id"])["path"]
+    assert main.FILES.exists(key)
+
     assert client.delete(f"/datasets/{upload['dataset_id']}").status_code == 204
-    assert not Path(path).exists()
+    assert not main.FILES.exists(key)
     assert client.store.get_dataset(upload["dataset_id"]) is None
 
 
