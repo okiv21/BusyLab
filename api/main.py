@@ -17,7 +17,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -319,6 +319,59 @@ def _rebuild_findings(story: dict[str, Any]) -> list:
             )
         )
     return out
+
+
+@app.get("/datasets/{dataset_id}/export.{fmt}")
+def export_story(
+    dataset_id: str, fmt: str, store: JobStore = Depends(get_store)
+) -> Response:
+    """Download the story as a PDF or a slide deck (spec Pillar 6).
+
+    Deliberately not MP4: slow, expensive per refresh, and stale the moment the
+    data moves. Present mode covers that need inside the app instead.
+    """
+    if fmt not in {"pdf", "pptx"}:
+        raise HTTPException(
+            status_code=404, detail="Exports are available as pdf or pptx."
+        )
+
+    dataset = store.get_dataset(dataset_id)
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="No such dataset.")
+    story = dataset.get("story")
+    if not story:
+        raise HTTPException(status_code=409, detail="The analysis has not finished.")
+    if story.get("held"):
+        raise HTTPException(
+            status_code=409,
+            detail="This analysis was held by the data quality gate, so there "
+            "is nothing to export.",
+        )
+
+    from busylab.export import to_pdf, to_pptx
+
+    findings = _rebuild_findings(story)
+    name = Path(dataset["filename"]).stem or "business"
+
+    if fmt == "pdf":
+        payload = to_pdf(findings, business_name=name)
+        media = "application/pdf"
+    else:
+        payload = to_pptx(findings, business_name=name)
+        media = (
+            "application/vnd.openxmlformats-officedocument.presentationml."
+            "presentation"
+        )
+
+    return Response(
+        content=payload,
+        media_type=media,
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{name}-business-in-review.{fmt}"'
+            )
+        },
+    )
 
 
 @app.get("/datasets/{dataset_id}/alerts")

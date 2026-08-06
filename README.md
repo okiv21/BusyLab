@@ -51,7 +51,8 @@ fully without any model configured.
 | 7. Forecasting | **done** (ARIMA, bands mandatory) |
 | 8. Customer intelligence and goals | **done** (Pillars 3 and 4) |
 | 9. Monitoring and alerts | **done** (anomalies, digest, scheduler) |
-| 10-11 | not started |
+| 10. Present mode and exports | **done** |
+| 11. Polish pass | not started |
 
 ## Getting started
 
@@ -196,6 +197,39 @@ Implemented (Pillar 0, the non-obvious layer):
   so `check_non_directive` enforces it mechanically over every summary and the
   test suite fails on a violation. Directive AI carries liability; illuminating
   AI is trusted.
+
+## Present mode and exports
+
+**Present mode** plays the ranked story one finding at a time: chart animates
+in, sentence with it, keyboard and click navigation, auto-advance, progress
+dots. Almost free to build because every ingredient already existed - this is
+those pieces played in sequence.
+
+**Rendered MP4 is explicitly rejected** (spec Pillar 6). It is slow, expensive
+per business and per refresh, and frozen the moment the numbers move. Present
+mode covers the same need and updates the instant the data does.
+
+**Voiceover is free.** The spec defers narration to a paid tier on the
+assumption of a hosted TTS bill; the browser's own `speechSynthesis` has no
+bill and no API key, so it is simply on for everyone. Availability is still
+checked, because some Linux browsers ship with no voices installed.
+
+**PDF and slide deck** are generated server-side from the same findings:
+
+```
+GET /datasets/{id}/export.pdf
+GET /datasets/{id}/export.pptx
+```
+
+The deck carries **native, editable PowerPoint charts** rather than pictures,
+so a recipient can restyle one for their own template or fix a label without
+coming back. Where a finding's shape has no honest chart form - a cohort
+triangle, a correlation matrix - it gets a clean table instead of a bad
+picture. Both libraries are pure Python with nothing to compile, which matters
+because install size is the deployment constraint.
+
+A story the quality gate held cannot be exported. Putting a withheld analysis
+into a board deck would launder exactly the thing the gate stopped.
 
 ## Monitoring and alerts
 

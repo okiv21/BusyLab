@@ -21,10 +21,12 @@ export default function StoryView({
   story,
   datasetId,
   onReanalysed,
+  onPresent,
 }: {
   story: Story;
   datasetId: string;
   onReanalysed?: () => void;
+  onPresent?: () => void;
 }) {
   const [goals, setGoals] = useState<Goal[]>([]);
 
@@ -73,16 +75,31 @@ export default function StoryView({
         gap: 22,
       }}
     >
-      <header>
-        <div className="eyebrow">analysed just now</div>
-        <h2 style={{ font: "700 27px var(--font-display)", margin: "6px 0" }}>
-          Here&apos;s your story.
-        </h2>
-        <p style={{ margin: 0, fontSize: 15, color: "var(--ink-muted)" }}>
-          {story.findings.length}{" "}
-          {story.findings.length === 1 ? "finding" : "findings"}, ranked by how
-          much they matter. Start at the top.
-        </p>
+      <header
+        style={{
+          display: "flex",
+          alignItems: "flex-end",
+          justifyContent: "space-between",
+          gap: 16,
+          flexWrap: "wrap",
+        }}
+      >
+        <div>
+          <div className="eyebrow">analysed just now</div>
+          <h2 style={{ font: "700 27px var(--font-display)", margin: "6px 0" }}>
+            Here&apos;s your story.
+          </h2>
+          <p style={{ margin: 0, fontSize: 15, color: "var(--ink-muted)" }}>
+            {story.findings.length}{" "}
+            {story.findings.length === 1 ? "finding" : "findings"}, ranked by how
+            much they matter. Start at the top.
+          </p>
+        </div>
+        {onPresent && story.findings.length > 0 && (
+          <button className="btn" onClick={onPresent} style={{ fontSize: 14 }}>
+            ▶  Present
+          </button>
+        )}
       </header>
 
       {/* The gate let this through, but said something worth knowing. */}

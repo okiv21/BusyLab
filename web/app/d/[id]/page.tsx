@@ -14,12 +14,13 @@ import { useParams } from "next/navigation";
 import { motion } from "framer-motion";
 import { AppHeader, Stepper } from "@/components/Brand";
 import ColumnCheck from "@/components/ColumnCheck";
+import PresentMode from "@/components/PresentMode";
 import QualityHold from "@/components/QualityHold";
 import StoryView from "@/components/StoryView";
 import { ApiError, confirmColumns, getColumns, getStory, waitForJob } from "@/lib/api";
 import type { Columns, Story } from "@/lib/types";
 
-type Stage = "loading" | "columns" | "analysing" | "story" | "error";
+type Stage = "loading" | "columns" | "analysing" | "story" | "present" | "error";
 
 export default function DatasetPage() {
   const { id } = useParams<{ id: string }>();
@@ -91,7 +92,11 @@ export default function DatasetPage() {
     <main className="shell">
       <div className="frame">
         <AppHeader>
-          {stage === "story" ? <span /> : <Stepper active={stepIndex} />}
+          {stage === "story" || stage === "present" ? (
+            <span />
+          ) : (
+            <Stepper active={stepIndex} />
+          )}
           <span />
         </AppHeader>
 
@@ -110,10 +115,19 @@ export default function DatasetPage() {
           />
         )}
 
+        {stage === "present" && story && (
+          <PresentMode
+            story={story}
+            datasetId={id}
+            onExit={() => setStage("story")}
+          />
+        )}
+
         {stage === "story" && story && !story.held && (
           <StoryView
             story={story}
             datasetId={id}
+            onPresent={() => setStage("present")}
             onReanalysed={async () => {
               try {
                 setStory(await getStory(id));
