@@ -54,6 +54,9 @@ CREATE TABLE IF NOT EXISTS datasets (
     detection    JSONB,
     story        JSONB,
     overrides    JSONB NOT NULL DEFAULT '{}'::jsonb,
+    -- Who receives this dataset's digest. One address per dataset, because a
+    -- single global recipient sends every business's numbers to one inbox.
+    recipient    TEXT NOT NULL DEFAULT '',
     created_at   TEXT NOT NULL
 );
 
@@ -143,18 +146,26 @@ class PostgresJobStore:
                 "UPDATE datasets SET path = %s WHERE id = %s", (path, dataset_id)
             )
 
+    def set_recipient(self, dataset_id: str, recipient: str) -> None:
+        """Where this dataset's digest is sent."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE datasets SET recipient = %s WHERE id = %s",
+                (recipient, dataset_id),
+            )
+
     def get_dataset(self, dataset_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT id, filename, path, fingerprint, detection, story, "
-                "overrides, created_at FROM datasets WHERE id = %s",
+                "overrides, recipient, created_at FROM datasets WHERE id = %s",
                 (dataset_id,),
             ).fetchone()
         if row is None:
             return None
         keys = (
             "id", "filename", "path", "fingerprint", "detection", "story",
-            "overrides", "created_at",
+            "overrides", "recipient", "created_at",
         )
         # psycopg already decodes jsonb into Python objects, so unlike the
         # SQLite store there is nothing to json.loads here.

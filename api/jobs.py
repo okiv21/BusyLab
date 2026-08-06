@@ -104,6 +104,9 @@ CREATE TABLE IF NOT EXISTS datasets (
     detection    TEXT,
     story        TEXT,
     overrides    TEXT NOT NULL DEFAULT '{}',
+    -- Who receives this dataset's digest. One address per dataset, because a
+    -- single global recipient sends every business's numbers to one inbox.
+    recipient    TEXT NOT NULL DEFAULT '',
     created_at   TEXT NOT NULL
 );
 
@@ -192,6 +195,14 @@ class JobStore:
         with self._connect() as conn:
             conn.execute(
                 "UPDATE datasets SET path = ? WHERE id = ?", (path, dataset_id)
+            )
+
+    def set_recipient(self, dataset_id: str, recipient: str) -> None:
+        """Where this dataset's digest is sent."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE datasets SET recipient = ? WHERE id = ?",
+                (recipient, dataset_id),
             )
 
     def delete_dataset(self, dataset_id: str) -> None:

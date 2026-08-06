@@ -552,6 +552,75 @@ def test_a_digest_is_sent_when_a_recipient_is_configured(
     assert story.get("digest_sent") is True
 
 
+def test_each_dataset_has_its_own_recipient(client, analysed) -> None:
+    """One global address sends every business's numbers to one inbox."""
+    assert (
+        client.put(
+            f"/datasets/{analysed}/recipient", json={"email": "owner@shop.com"}
+        ).status_code
+        == 204
+    )
+    assert client.store.get_dataset(analysed)["recipient"] == "owner@shop.com"
+
+
+def test_the_dataset_recipient_wins_over_the_global_one(
+    client, analysed, monkeypatch
+) -> None:
+    monkeypatch.setenv("BUSYLAB_DIGEST_TO", "fallback@example.com")
+    monkeypatch.setenv("BUSYLAB_MAILER", "log")
+    client.put(f"/datasets/{analysed}/recipient", json={"email": "owner@shop.com"})
+
+    sent: list[str] = []
+    from busylab import digest as digest_module
+
+    original = digest_module.send_digest
+
+    def capture(digest, to, mailer=None):
+        sent.append(to)
+        return True
+
+    monkeypatch.setattr("api.handlers.send_digest", capture)
+    client.post("/internal/tick?token=test-token")
+    client.worker.drain()
+
+    assert sent == ["owner@shop.com"]
+
+
+def test_an_obvious_typo_is_refused(client, analysed) -> None:
+    for bad in ("not-an-email", "missing@domain", "@nolocal.com", "two@@at.com"):
+        response = client.put(f"/datasets/{analysed}/recipient", json={"email": bad})
+        assert response.status_code == 422, bad
+
+
+def test_a_recipient_can_be_cleared(client, analysed) -> None:
+    client.put(f"/datasets/{analysed}/recipient", json={"email": "a@b.com"})
+    assert client.put(f"/datasets/{analysed}/recipient", json={"email": ""}).status_code == 204
+    assert client.store.get_dataset(analysed)["recipient"] == ""
+
+
+def test_the_email_test_endpoint_needs_the_token(client) -> None:
+    assert client.post("/internal/test-email?to=a@b.com").status_code == 401
+
+
+def test_the_email_test_endpoint_needs_a_recipient(client, monkeypatch) -> None:
+    monkeypatch.delenv("BUSYLAB_DIGEST_TO", raising=False)
+    response = client.post("/internal/test-email?token=test-token")
+    assert response.status_code == 422
+
+
+def test_the_email_test_endpoint_reports_what_happened(client, monkeypatch) -> None:
+    """Closes the feedback loop on credentials without waiting for a cron."""
+    monkeypatch.setenv("BUSYLAB_MAILER", "log")
+    body = client.post(
+        "/internal/test-email?token=test-token&to=owner@example.com"
+    ).json()
+
+    assert body["sent"] is True
+    assert body["to"] == "owner@example.com"
+    assert body["mailer"] == "log"
+    assert "log" in body["hint"]
+
+
 def test_implicit_tls_uses_the_right_smtp_class() -> None:
     """Port 465 is implicit TLS; giving it STARTTLS fails obscurely."""
     import inspect

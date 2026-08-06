@@ -156,42 +156,97 @@ previewable in the app either way.
 
 Two things are needed: an SMTP account, and somewhere to send it.
 
-### Which provider
+### Brevo (recommended once anyone but you receives these)
 
-**Gmail app password** is the quickest for testing, since you already have the
-account. Free, ~500 emails a day, working in two minutes.
+Free tier is 300 emails a day, no card, and it is a real relay rather than a
+personal mailbox.
 
-1. Enable **2-Step Verification** on the Google account - app passwords do not
-   exist without it.
-2. Go to [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords),
-   create one named `BusyLab`, and copy the 16-character code.
-3. Use it as `SMTP_PASSWORD`. It is not your Google password, and it can be
-   revoked on its own.
+1. Create an account at [brevo.com](https://www.brevo.com).
+2. Top-right user menu - **SMTP & API** - the **SMTP** tab.
+3. Copy the **SMTP key**. It is *not* the API key; the two are on adjacent
+   tabs and they are not interchangeable. Watch for a trailing space when
+   copying - a single extra character fails authentication with a message that
+   does not mention whitespace.
+4. **Senders, Domains & Dedicated IPs - Senders - Add a sender**, and verify
+   the address you will send *from*. Brevo emails it a confirmation link.
+   Sending from an unverified address is rejected.
 
 | Variable | Value |
 |---|---|
-| `SMTP_HOST` | `smtp.gmail.com` |
+| `SMTP_HOST` | `smtp-relay.brevo.com` |
 | `SMTP_PORT` | `587` |
-| `SMTP_USER` | your full Gmail address |
-| `SMTP_PASSWORD` | the 16-character app password |
-| `SMTP_FROM` | the same Gmail address |
-| `BUSYLAB_DIGEST_TO` | where the digest should land |
+| `SMTP_USER` | the SMTP login Brevo shows you, which is an email address |
+| `SMTP_PASSWORD` | the **SMTP key** |
+| `SMTP_FROM` | a sender you verified in step 4 |
 
-**Brevo** is the better answer once anyone other than you is receiving these.
-Free tier is 300 emails a day, no card, and it is a real relay rather than a
-personal mailbox. Create an account, then **SMTP & API - SMTP**:
-`smtp-relay.brevo.com`, port `587`, with the login and master password it
-shows you.
+### About your domain
 
-> Sending to yourself from Gmail is fine. Sending to **customers** from a
-> personal Gmail is not: without a domain and its SPF and DKIM records, a
-> meaningful share of it lands in spam. That needs a domain, which is the
-> point at which Brevo or Resend earns its place.
+Verifying a single address gets you sending. It does not get you *delivered*.
+
+Authenticating a **domain** - adding the SPF and DKIM records Brevo gives you
+to your DNS - is what stops a meaningful share of these landing in spam, and it
+is the difference between a digest a customer reads and one they never see. A
+domain costs a few pounds a year and is the first thing in this project that is
+not free.
+
+Until then, sending to yourself and to people who are expecting it works fine.
+
+### Gmail instead, for testing only
+
+Quicker if you just want to see one arrive: enable 2-Step Verification, create
+an app password at
+[myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords),
+then `smtp.gmail.com` on port `587` with that 16-character code as the
+password. Roughly 500 a day.
+
+Fine while it is only you. Not the right answer for customers: a personal
+mailbox has no domain authentication behind it, and Gmail rate-limits in ways
+that are invisible until they are not.
 
 ### Where the variables go
 
 On the **worker** service in Render, not the API - the worker is what runs the
 scheduled analysis and therefore what sends. Locally they go in `.env`.
+
+### Who receives it
+
+Each dataset carries its own address, so every business gets its own numbers:
+
+```
+PUT /datasets/{id}/recipient   {"email": "owner@theirshop.com"}
+```
+
+`BUSYLAB_DIGEST_TO` remains as a fallback for anything without one, which is
+what a single-tenant setup looks like while you are testing against your own
+data.
+
+> **Before anyone else uses this:** there is no authentication yet, so anyone
+> who knows a dataset id can change where its digest is sent. That is fine
+> while it is your data on your machine and is not fine in public. Accounts
+> need to come before customers do.
+
+### Check it works, without waiting for Monday
+
+Once the variables are on the worker and it has redeployed:
+
+```bash
+curl -X POST "https://busylab-api.onrender.com/internal/test-email?token=YOUR_SCHEDULER_TOKEN&to=you@example.com"
+```
+
+It sends one throwaway message and tells you what happened:
+
+```json
+{"sent": true, "mailer": "smtp", "to": "you@example.com",
+ "hint": "Delivered. Check the inbox, and the spam folder."}
+```
+
+`"mailer": "log"` means no SMTP settings were found, so it was written to the
+worker log rather than sent - check the variables are on the **worker**
+service, not only the API.
+
+`"sent": false` means the provider refused it. The worker log carries the
+reason. The two usual causes are an unverified `SMTP_FROM`, and the API key
+(`xkeysib-`) pasted where the SMTP key (`xsmtpsib-`) belongs.
 
 ### When it actually sends
 

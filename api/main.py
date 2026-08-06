@@ -13,6 +13,7 @@ analysing, story, drill-down.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -377,6 +378,43 @@ def export_story(
     )
 
 
+class RecipientRequest(BaseModel):
+    """Where this dataset's weekly digest should be sent."""
+
+    email: str = Field(default="", max_length=254)
+
+
+#: Deliberately permissive. Full RFC 5322 validation rejects addresses that
+#: work, and the real check is whether the digest arrives; this only catches
+#: obvious typos before they become silent non-delivery.
+_EMAIL = re.compile(r"^[^@\s]+@[^@\s.]+\.[^@\s]+$")
+
+
+@app.put("/datasets/{dataset_id}/recipient", status_code=204)
+def set_recipient(
+    dataset_id: str, body: RecipientRequest, store = Depends(get_store)
+) -> None:
+    """Set or clear where this dataset's digest goes.
+
+    Per dataset rather than one global address, so each business receives its
+    own numbers. An empty string clears it.
+
+    Note for later: there is no authentication yet, so anyone who knows a
+    dataset id can change where its digest is sent. That is acceptable while
+    one person is testing against their own data and is not acceptable in
+    public - this endpoint needs to sit behind an account before anyone else
+    uses the product.
+    """
+    if store.get_dataset(dataset_id) is None:
+        raise HTTPException(status_code=404, detail="No such dataset.")
+
+    email = body.email.strip()
+    if email and not _EMAIL.match(email):
+        raise HTTPException(status_code=422, detail="That is not an email address.")
+
+    store.set_recipient(dataset_id, email)
+
+
 @app.get("/datasets/{dataset_id}/alerts")
 def list_alerts(
     dataset_id: str,
@@ -469,6 +507,63 @@ def scheduled_tick(
         queued.append({"dataset_id": dataset_id, "job_id": job.id})
 
     return {"queued": len(queued), "jobs": queued}
+
+
+@app.post("/internal/test-email", status_code=200)
+def test_email(token: str = "", to: str = "") -> dict[str, Any]:
+    """Send one throwaway digest, to prove the SMTP settings work.
+
+    Getting mail credentials right is trial and error - the wrong key, an
+    unverified sender, a trailing space - and the normal feedback loop is to
+    wait for a cron and then read worker logs. This closes that loop: it tests
+    the settings on the *deployed* service, which is the only place they
+    matter, and returns the provider's own error rather than a generic failure.
+
+    Behind the scheduler token so it cannot be used to send mail at will.
+    """
+    if not SCHEDULER_TOKEN:
+        raise HTTPException(status_code=503, detail="No scheduler token is set.")
+
+    import hmac
+
+    if not hmac.compare_digest(token, SCHEDULER_TOKEN):
+        raise HTTPException(status_code=401, detail="Bad scheduler token.")
+
+    recipient = (to or os.environ.get("BUSYLAB_DIGEST_TO", "")).strip()
+    if not recipient:
+        raise HTTPException(
+            status_code=422,
+            detail="Pass ?to=you@example.com, or set BUSYLAB_DIGEST_TO.",
+        )
+
+    from busylab.digest import Digest, mailer_from_env
+
+    mailer = mailer_from_env()
+    sample = Digest(
+        period_label="test message",
+        headline=(
+            "If you are reading this, BusyLab can send your weekly digest."
+        ),
+        lines=["The real one arrives on Mondays, and only when there is "
+               "something worth saying."],
+    )
+
+    delivered = mailer.send(recipient, sample)
+    return {
+        "sent": delivered,
+        "mailer": mailer.name,
+        "to": recipient,
+        "hint": (
+            "Delivered. Check the inbox, and the spam folder."
+            if delivered and mailer.name != "log"
+            else "No mailer is configured, so this was written to the worker "
+            "log instead of sent."
+            if mailer.name == "log"
+            else "The provider refused it. The worker log carries the reason - "
+            "usually an unverified sender, or the API key used in place of "
+            "the SMTP key."
+        ),
+    }
 
 
 class GoalRequest(BaseModel):

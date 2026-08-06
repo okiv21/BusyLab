@@ -249,7 +249,9 @@ def handle_analyse(job: Job, store: JobStore, files: FileStore) -> dict[str, Any
     # Re-analysing after setting a goal or confirming a column would otherwise
     # send an email every time, which is the fastest way to get filtered.
     if job.payload.get("send_digest"):
-        payload["digest_sent"] = _send_digest(story.findings, alerts)
+        payload["digest_sent"] = _send_digest(
+            story.findings, alerts, dataset.get("recipient") or ""
+        )
 
     columns = set(story.frame.data.columns) if story.frame else set()
     payload["chips"] = [
@@ -262,12 +264,12 @@ def handle_analyse(job: Job, store: JobStore, files: FileStore) -> dict[str, Any
     return payload
 
 
-def _send_digest(findings, alerts) -> bool:
+def _send_digest(findings, alerts, recipient: str = "") -> bool:
     """Email the business-in-review digest, if there is anywhere to send it.
 
-    The recipient is a single address for now, because there are no accounts
-    yet: one person is testing this against their own data. Per-customer
-    recipients arrive with authentication, not before.
+    The address belongs to the dataset, so each business's numbers go to that
+    business. ``BUSYLAB_DIGEST_TO`` remains as a fallback for a single-tenant
+    setup, which is what testing against your own data looks like.
 
     Returns whether anything was actually sent. An unconfigured mailer writes
     the digest to the log instead, which is a supported outcome rather than a
@@ -276,7 +278,7 @@ def _send_digest(findings, alerts) -> bool:
     """
     import os
 
-    recipient = os.environ.get("BUSYLAB_DIGEST_TO", "").strip()
+    recipient = (recipient or os.environ.get("BUSYLAB_DIGEST_TO", "")).strip()
     if not recipient:
         return False
 
