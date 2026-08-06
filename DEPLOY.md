@@ -48,8 +48,28 @@ your laptop restarts.
    > exhaust it. The code disables psycopg's automatic prepared statements for
    > this reason too - the transaction pooler does not support them, and
    > psycopg turns them on by itself after a query has run five times.
-3. **Storage → New bucket → `uploads`.** Keep it **private**. Uploads go
-   through the API using the service key; the browser never touches the bucket.
+3. **Storage - New bucket - `uploads`.** Three options appear:
+
+   | Option | Set it to | Why |
+   |---|---|---|
+   | Public bucket | **off** | These are a business's actual sales records. Public means anyone with the URL can read them. Uploads go through the API using the service key, so the browser never needs access. |
+   | Restrict file size | **25 MB** | Matches the API's own cap, so the limit still holds if anything ever reaches the bucket another way. |
+   | Restrict MIME types | optional, see below | Safe to switch on. |
+
+   If you do restrict MIME types, these are the five the API sends - one per
+   accepted extension:
+
+   ```
+   application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+   application/vnd.ms-excel.sheet.macroEnabled.12
+   application/vnd.ms-excel
+   text/csv
+   text/tab-separated-values
+   ```
+
+   Miss one and uploads of that format fail with a bucket error rather than
+   anything BusyLab can explain, so leaving the restriction off is a reasonable
+   choice too - the API already refuses anything that is not a spreadsheet.
 4. **Project Settings → API.** Copy the **Project URL** and the
    **`service_role`** key.
 

@@ -319,6 +319,27 @@ def test_supabase_reports_itself_unavailable_without_credentials() -> None:
     assert not SupabaseFileStore(url="", key="").available()
 
 
+def test_uploads_carry_their_real_content_type() -> None:
+    """A bucket that restricts MIME types rejects octet-stream.
+
+    Every accepted extension must map to the type Supabase expects, or
+    switching on the bucket's MIME restriction silently breaks all uploads.
+    """
+    from api.main import ALLOWED_SUFFIXES
+    from api.storage import content_type_for
+
+    for suffix in ALLOWED_SUFFIXES:
+        resolved = content_type_for(f"dataset{suffix}")
+        assert resolved != "application/octet-stream", suffix
+        assert "/" in resolved
+
+
+def test_an_unknown_extension_falls_back_to_a_generic_type() -> None:
+    from api.storage import content_type_for
+
+    assert content_type_for("x.bin") == "application/octet-stream"
+
+
 def test_the_file_store_factory_defaults_to_local(monkeypatch) -> None:
     for key in ("SUPABASE_URL", "SUPABASE_SERVICE_KEY"):
         monkeypatch.delenv(key, raising=False)

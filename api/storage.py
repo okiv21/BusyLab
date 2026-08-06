@@ -33,6 +33,28 @@ class StorageError(RuntimeError):
     """The file could not be stored or retrieved."""
 
 
+#: The real content type per accepted extension.
+#:
+#: Sending everything as ``application/octet-stream`` would work until the
+#: bucket is configured to restrict MIME types, at which point every upload is
+#: rejected for being the wrong kind of file. Storing the true type also means
+#: anything else reading the bucket sees a spreadsheet rather than a blob.
+CONTENT_TYPES: dict[str, str] = {
+    ".xlsx": (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    ),
+    ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
+    ".xls": "application/vnd.ms-excel",
+    ".csv": "text/csv",
+    ".tsv": "text/tab-separated-values",
+}
+
+
+def content_type_for(key: str) -> str:
+    """Best-known content type for a stored key."""
+    return CONTENT_TYPES.get(Path(key).suffix.lower(), "application/octet-stream")
+
+
 @runtime_checkable
 class FileStore(Protocol):
     """Somewhere to put an uploaded spreadsheet."""
@@ -119,7 +141,7 @@ class SupabaseFileStore:
                 "apikey": self.key,
                 # Upsert so a re-uploaded dataset overwrites rather than 409s.
                 "x-upsert": "true",
-                **({"Content-Type": "application/octet-stream"} if data else {}),
+                **({"Content-Type": content_type_for(key)} if data else {}),
             },
         )
         try:
