@@ -460,7 +460,12 @@ def scheduled_tick(
 
     queued = []
     for dataset_id in store.all_dataset_ids():
-        job = store.enqueue(JobKind.ANALYSE, dataset_id)
+        # The flag is what separates a scheduled run from a manual one. Only
+        # scheduled runs email a digest; re-analysing because someone set a
+        # goal must not.
+        job = store.enqueue(
+            JobKind.ANALYSE, dataset_id, payload={"send_digest": True}
+        )
         queued.append({"dataset_id": dataset_id, "job_id": job.id})
 
     return {"queued": len(queued), "jobs": queued}

@@ -294,10 +294,18 @@ class SmtpMailer:
         message.add_alternative(digest.to_html(), subtype="html")
 
         try:
-            with smtplib.SMTP(self.host, self.port, timeout=20) as server:
-                server.starttls()
-                server.login(self.user, self.password)
-                server.send_message(message)
+            # Port 465 is implicit TLS and must not be given STARTTLS; 587 is
+            # the reverse. Providers differ on which they offer, and getting it
+            # wrong fails with a handshake error that names neither.
+            if self.port == 465:
+                with smtplib.SMTP_SSL(self.host, self.port, timeout=20) as server:
+                    server.login(self.user, self.password)
+                    server.send_message(message)
+            else:
+                with smtplib.SMTP(self.host, self.port, timeout=20) as server:
+                    server.starttls()
+                    server.login(self.user, self.password)
+                    server.send_message(message)
             return True
         except (smtplib.SMTPException, OSError) as exc:
             log.error("digest delivery failed: %s", exc)

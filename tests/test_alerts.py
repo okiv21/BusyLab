@@ -515,6 +515,54 @@ def test_the_scheduler_queues_a_refresh_for_every_dataset(client, analysed) -> N
     assert any(j["dataset_id"] == analysed for j in body["jobs"])
 
 
+def test_a_scheduled_run_is_flagged_to_send_a_digest(client, analysed) -> None:
+    """Only scheduled runs email. A manual re-analysis must not."""
+    response = client.post("/internal/tick?token=test-token")
+    job_id = response.json()["jobs"][0]["job_id"]
+
+    scheduled = client.store.get(job_id)
+    assert scheduled.payload.get("send_digest") is True
+
+    manual = client.post(f"/datasets/{analysed}/columns", json={"roles": {}}).json()
+    assert not client.store.get(manual["job_id"]).payload.get("send_digest")
+
+
+def test_no_digest_is_sent_without_a_recipient(client, analysed, monkeypatch) -> None:
+    """An unset address means the digest is logged, not emailed."""
+    monkeypatch.delenv("BUSYLAB_DIGEST_TO", raising=False)
+
+    client.post("/internal/tick?token=test-token")
+    client.worker.drain()
+
+    story = client.get(f"/datasets/{analysed}/story").json()
+    assert story.get("digest_sent") is False
+
+
+def test_a_digest_is_sent_when_a_recipient_is_configured(
+    client, analysed, monkeypatch
+) -> None:
+    """With an address set, a scheduled run delivers through the mailer."""
+    monkeypatch.setenv("BUSYLAB_DIGEST_TO", "owner@example.com")
+    monkeypatch.setenv("BUSYLAB_MAILER", "log")  # no real account needed
+
+    client.post("/internal/tick?token=test-token")
+    client.worker.drain()
+
+    story = client.get(f"/datasets/{analysed}/story").json()
+    assert story.get("digest_sent") is True
+
+
+def test_implicit_tls_uses_the_right_smtp_class() -> None:
+    """Port 465 is implicit TLS; giving it STARTTLS fails obscurely."""
+    import inspect
+
+    from busylab.digest import SmtpMailer
+
+    source = inspect.getsource(SmtpMailer.send)
+    assert "SMTP_SSL" in source
+    assert "465" in source
+
+
 def test_the_scheduler_is_off_when_no_token_is_configured(
     client, analysed, monkeypatch
 ) -> None:

@@ -70,3 +70,6 @@ services:
         sync: false
       - key: SMTP_FROM
         sync: false
+      # Where the weekly digest lands. Unset means it is logged, not sent.
+      - key: BUSYLAB_DIGEST_TO
+        sync: false

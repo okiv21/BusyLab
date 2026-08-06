@@ -245,6 +245,12 @@ def handle_analyse(job: Job, store: JobStore, files: FileStore) -> dict[str, Any
         payload["new_alerts"] = []
         payload.setdefault("errors", []).append(f"alerting failed: {exc}")
 
+    # The digest goes out only on a scheduled run, never on a manual one.
+    # Re-analysing after setting a goal or confirming a column would otherwise
+    # send an email every time, which is the fastest way to get filtered.
+    if job.payload.get("send_digest"):
+        payload["digest_sent"] = _send_digest(story.findings, alerts)
+
     columns = set(story.frame.data.columns) if story.frame else set()
     payload["chips"] = [
         {"name": chip.name, "label": chip.label}
@@ -254,6 +260,37 @@ def handle_analyse(job: Job, store: JobStore, files: FileStore) -> dict[str, Any
 
     store.save_story(job.dataset_id, payload)
     return payload
+
+
+def _send_digest(findings, alerts) -> bool:
+    """Email the business-in-review digest, if there is anywhere to send it.
+
+    The recipient is a single address for now, because there are no accounts
+    yet: one person is testing this against their own data. Per-customer
+    recipients arrive with authentication, not before.
+
+    Returns whether anything was actually sent. An unconfigured mailer writes
+    the digest to the log instead, which is a supported outcome rather than a
+    failure - the whole thing is buildable and reviewable without an email
+    account.
+    """
+    import os
+
+    recipient = os.environ.get("BUSYLAB_DIGEST_TO", "").strip()
+    if not recipient:
+        return False
+
+    digest = build_digest(findings, alerts)
+    if digest.is_empty:
+        return False
+
+    try:
+        return send_digest(digest, recipient)
+    except Exception as exc:  # delivery must never sink an analysis
+        import logging
+
+        logging.getLogger(__name__).error("digest delivery failed: %s", exc)
+        return False
 
 
 def build_handlers(files: FileStore | None = None) -> dict:

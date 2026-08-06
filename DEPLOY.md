@@ -148,6 +148,63 @@ so nothing is exposed while you are still setting up.
 
 ---
 
+## 5. Email for the weekly digest (optional)
+
+Without this the digest is written to the worker log instead of sent. That is
+a supported state, not a broken one - everything else works, and the digest is
+previewable in the app either way.
+
+Two things are needed: an SMTP account, and somewhere to send it.
+
+### Which provider
+
+**Gmail app password** is the quickest for testing, since you already have the
+account. Free, ~500 emails a day, working in two minutes.
+
+1. Enable **2-Step Verification** on the Google account - app passwords do not
+   exist without it.
+2. Go to [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords),
+   create one named `BusyLab`, and copy the 16-character code.
+3. Use it as `SMTP_PASSWORD`. It is not your Google password, and it can be
+   revoked on its own.
+
+| Variable | Value |
+|---|---|
+| `SMTP_HOST` | `smtp.gmail.com` |
+| `SMTP_PORT` | `587` |
+| `SMTP_USER` | your full Gmail address |
+| `SMTP_PASSWORD` | the 16-character app password |
+| `SMTP_FROM` | the same Gmail address |
+| `BUSYLAB_DIGEST_TO` | where the digest should land |
+
+**Brevo** is the better answer once anyone other than you is receiving these.
+Free tier is 300 emails a day, no card, and it is a real relay rather than a
+personal mailbox. Create an account, then **SMTP & API - SMTP**:
+`smtp-relay.brevo.com`, port `587`, with the login and master password it
+shows you.
+
+> Sending to yourself from Gmail is fine. Sending to **customers** from a
+> personal Gmail is not: without a domain and its SPF and DKIM records, a
+> meaningful share of it lands in spam. That needs a domain, which is the
+> point at which Brevo or Resend earns its place.
+
+### Where the variables go
+
+On the **worker** service in Render, not the API - the worker is what runs the
+scheduled analysis and therefore what sends. Locally they go in `.env`.
+
+### When it actually sends
+
+Only on a **scheduled** run - the Monday and monthly cron. Re-analysing because
+you set a goal or confirmed a column does not send anything, or you would get
+an email every time you clicked. An empty digest is not sent at all.
+
+Test the whole path without waiting for Monday:
+
+**Actions - Scheduled refresh - Run workflow**
+
+---
+
 ## Checking it worked
 
 ```bash
