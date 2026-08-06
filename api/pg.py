@@ -97,14 +97,25 @@ class PostgresJobStore:
     """The production store. Same surface as :class:`JobStore`."""
 
     def __init__(self, dsn: str) -> None:
-        import psycopg
         from psycopg_pool import ConnectionPool
 
         self.dsn = dsn
         # A small pool: a free Supabase project has a modest connection cap and
         # the API plus one worker do not need many.
+        #
+        # prepare_threshold=None disables psycopg's automatic prepared
+        # statements, and it is not optional here. psycopg promotes a query to
+        # a prepared statement after its fifth execution, and Supabase's
+        # transaction pooler (port 6543) does not support prepared statements
+        # at all. Since claim() polls continuously, the fifth execution arrives
+        # within seconds of starting - so without this the worker would run
+        # briefly and then fail permanently with a confusing protocol error.
         self._pool = ConnectionPool(
-            dsn, min_size=1, max_size=int(_env_int("BUSYLAB_PG_POOL", 4)), open=True
+            dsn,
+            min_size=1,
+            max_size=_env_int("BUSYLAB_PG_POOL", 4),
+            open=True,
+            kwargs={"prepare_threshold": None, "autocommit": False},
         )
         with self._connect() as conn:
             conn.execute(_SCHEMA)

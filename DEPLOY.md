@@ -26,14 +26,28 @@ your laptop restarts.
 
 1. Create a project at [supabase.com](https://supabase.com). Note the database
    password you set - it goes in the connection string.
-2. **Project Settings → Database → Connection string → URI.** Copy it. It looks
-   like:
+2. Click **Connect** at the **top of the dashboard** - next to the project
+   name, not under Settings. You will be offered three connection strings:
+
+   | Option | Port | Use this? |
+   |---|---|---|
+   | Direct connection | 5432 | **No.** It is IPv6-only, and Render is not. |
+   | **Transaction pooler** | **6543** | **Yes.** |
+   | Session pooler | 5432 | Fallback if the pooler misbehaves. |
+
+   Copy the **Transaction pooler** URI. It looks like:
    ```
-   postgresql://postgres.abcdef:PASSWORD@aws-0-eu-west-2.pooler.supabase.com:6543/postgres
+   postgresql://postgres.abcdefgh:[YOUR-PASSWORD]@aws-0-eu-west-2.pooler.supabase.com:6543/postgres
    ```
-   Use the **connection pooler** URI (port 6543), not the direct one. A free
-   Postgres has a low connection cap and two Render services plus the pooler is
-   more forgiving.
+   Replace `[YOUR-PASSWORD]` with the database password you set when creating
+   the project. If you have lost it, reset it under
+   **Settings → Database → Database password**.
+
+   > The pooler is not just a preference. A free Postgres has a low connection
+   > cap, and two Render services reconnecting after every spin-down will
+   > exhaust it. The code disables psycopg's automatic prepared statements for
+   > this reason too - the transaction pooler does not support them, and
+   > psycopg turns them on by itself after a query has run five times.
 3. **Storage → New bucket → `uploads`.** Keep it **private**. Uploads go
    through the API using the service key; the browser never touches the bucket.
 4. **Project Settings → API.** Copy the **Project URL** and the
@@ -62,7 +76,7 @@ run.
 
    | Variable | Value |
    |---|---|
-   | `BUSYLAB_CORS` | your Vercel URL, e.g. `https://busylab.vercel.app` — no trailing slash |
+   | `BUSYLAB_CORS` | your Vercel URL, e.g. `https://busylab.vercel.app` - no trailing slash |
    | `BUSYLAB_SCHEDULER_TOKEN` | a long random string you invent |
 
    Optional on both: `GROQ_API_KEY` for nicer wording. Optional on the worker:
@@ -84,7 +98,7 @@ run.
 
    | Variable | Value |
    |---|---|
-   | `NEXT_PUBLIC_API` | `https://busylab-api.onrender.com` — no trailing slash |
+   | `NEXT_PUBLIC_API` | `https://busylab-api.onrender.com` - no trailing slash |
 
 4. Deploy. Then go back to Render and make sure `BUSYLAB_CORS` matches the
    Vercel URL exactly. A mismatch shows up as *"Cannot reach BusyLab"* in the
@@ -145,6 +159,27 @@ true:
    after a successful ingest and keeps the parsed result is the cheap fix.
 3. **Narration calls**, as usage grows. Already cached per finding, so a
    sentence is only paid for when the numbers behind it change.
+
+## If the database will not connect
+
+| What you see | What it means |
+|---|---|
+| `could not translate host name` | The URI was copied with `[YOUR-PASSWORD]` still in it, or a character in the password needs URL-encoding. `@ : / ?` in a password must be percent-encoded, or reset the password to something alphanumeric. |
+| `Network is unreachable` | You used the **direct** connection (`db.xxx.supabase.co:5432`). It is IPv6-only and Render is not. Use the transaction pooler. |
+| `prepared statement "_pg3_0" already exists` | Prepared statements reaching the pooler. The code disables them, so this means an older build is deployed - redeploy. |
+| `too many connections` | Lower `BUSYLAB_PG_POOL`, or you are running more services than a free Postgres allows. |
+| `password authentication failed` | The database password, not your Supabase account password. Reset it under **Settings - Database**. |
+| Data vanishes after a restart | `DATABASE_URL` never reached the service, so it silently fell back to SQLite on the disposable disk. Check the variable is set on **both** the API and the worker. |
+
+To check the connection string before deploying anything, run it against the
+contract suite - this is exactly what those 20 skipped tests are for:
+
+```bash
+TEST_DATABASE_URL="postgresql://postgres.xxx:PASSWORD@aws-0-...:6543/postgres"   python -m pytest tests/test_stores.py -q
+```
+
+All 46 passing means the Postgres path genuinely works. Do this before Render,
+not after - it turns a confusing deploy failure into a clear local one.
 
 ## Known limits of the free tier
 
