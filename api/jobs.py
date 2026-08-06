@@ -135,6 +135,19 @@ CREATE TABLE IF NOT EXISTS goals (
     created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS goals_dataset ON goals (dataset_id);
+
+-- Alerts already sent (spec Pillar 2). The key is what makes an alert fire
+-- once: re-sending the same event on every scheduler run is the fastest way
+-- to get muted.
+CREATE TABLE IF NOT EXISTS alerts (
+    key          TEXT NOT NULL,
+    dataset_id   TEXT NOT NULL,
+    payload      TEXT NOT NULL,
+    acknowledged INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT NOT NULL,
+    PRIMARY KEY (key, dataset_id)
+);
+CREATE INDEX IF NOT EXISTS alerts_dataset ON alerts (dataset_id, created_at);
 """
 
 
@@ -299,6 +312,60 @@ class JobStore:
                 (goal_id, dataset_id),
             ).rowcount
         return bool(changed)
+
+    # -- alerts (spec Pillar 2) -------------------------------------------
+
+    def record_alerts(self, dataset_id: str, alerts: list[dict[str, Any]]) -> int:
+        """Store alerts that have not been seen before. Returns how many."""
+        stored = 0
+        with self._connect() as conn:
+            for alert in alerts:
+                changed = conn.execute(
+                    "INSERT OR IGNORE INTO alerts (key, dataset_id, payload, "
+                    "created_at) VALUES (?, ?, ?, ?)",
+                    (alert["key"], dataset_id, json.dumps(alert), _now()),
+                ).rowcount
+                stored += int(changed)
+        return stored
+
+    def sent_alert_keys(self, dataset_id: str) -> set[str]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT key FROM alerts WHERE dataset_id = ?", (dataset_id,)
+            ).fetchall()
+        return {row["key"] for row in rows}
+
+    def list_alerts(
+        self, dataset_id: str, *, include_acknowledged: bool = False
+    ) -> list[dict[str, Any]]:
+        query = "SELECT payload, acknowledged, created_at FROM alerts WHERE dataset_id = ?"
+        if not include_acknowledged:
+            query += " AND acknowledged = 0"
+        query += " ORDER BY created_at DESC"
+        with self._connect() as conn:
+            rows = conn.execute(query, (dataset_id,)).fetchall()
+        out = []
+        for row in rows:
+            payload = json.loads(row["payload"])
+            payload["acknowledged"] = bool(row["acknowledged"])
+            out.append(payload)
+        return out
+
+    def acknowledge_alert(self, dataset_id: str, key: str) -> bool:
+        with self._connect() as conn:
+            changed = conn.execute(
+                "UPDATE alerts SET acknowledged = 1 WHERE key = ? AND dataset_id = ?",
+                (key, dataset_id),
+            ).rowcount
+        return bool(changed)
+
+    def all_dataset_ids(self) -> list[str]:
+        """Every dataset with a stored story, for the scheduler to sweep."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id FROM datasets WHERE story IS NOT NULL ORDER BY created_at"
+            ).fetchall()
+        return [row["id"] for row in rows]
 
     # -- jobs -------------------------------------------------------------
 

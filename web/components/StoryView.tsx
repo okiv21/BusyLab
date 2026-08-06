@@ -14,6 +14,7 @@ import { motion } from "framer-motion";
 import FindingCard from "./FindingCard";
 import { ask, listGoals, waitForJob } from "@/lib/api";
 import GoalPanel from "./GoalPanel";
+import AlertsPanel from "./AlertsPanel";
 import type { Answer, Chip, Finding, Goal, Story } from "@/lib/types";
 
 export default function StoryView({
@@ -283,6 +284,9 @@ export default function StoryView({
           )}
         </div>
       )}
+
+      {/* --- what we noticed unprompted (spec Pillar 2) ------------------ */}
+      <AlertsPanel datasetId={datasetId} />
 
       {/* --- targets (spec Pillar 4) ------------------------------------ */}
       <GoalPanel

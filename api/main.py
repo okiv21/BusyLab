@@ -321,6 +321,95 @@ def _rebuild_findings(story: dict[str, Any]) -> list:
     return out
 
 
+@app.get("/datasets/{dataset_id}/alerts")
+def list_alerts(
+    dataset_id: str,
+    include_acknowledged: bool = False,
+    store: JobStore = Depends(get_store),
+) -> dict[str, Any]:
+    """What BusyLab noticed without being asked (spec Pillar 2)."""
+    if store.get_dataset(dataset_id) is None:
+        raise HTTPException(status_code=404, detail="No such dataset.")
+    return {"alerts": store.list_alerts(dataset_id, include_acknowledged=include_acknowledged)}
+
+
+@app.post("/datasets/{dataset_id}/alerts/{key}/acknowledge", status_code=204)
+def acknowledge_alert(
+    dataset_id: str, key: str, store: JobStore = Depends(get_store)
+) -> None:
+    if not store.acknowledge_alert(dataset_id, key):
+        raise HTTPException(status_code=404, detail="No such alert.")
+
+
+@app.get("/datasets/{dataset_id}/digest")
+def preview_digest(
+    dataset_id: str, store: JobStore = Depends(get_store)
+) -> dict[str, Any]:
+    """The business-in-review digest, rendered but not sent."""
+    dataset = store.get_dataset(dataset_id)
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="No such dataset.")
+    story = dataset.get("story")
+    if not story:
+        raise HTTPException(status_code=409, detail="The analysis has not finished.")
+
+    from busylab.alerts import Alert, AlertKind, AlertLevel
+    from busylab.digest import build_digest
+
+    findings = _rebuild_findings(story)
+    alerts = [
+        Alert(
+            kind=AlertKind(raw["kind"]),
+            level=AlertLevel(raw["level"]),
+            title=raw["title"],
+            detail=raw["detail"],
+            subject=raw.get("subject", ""),
+            period=raw.get("period", ""),
+            finding_id=raw.get("finding_id"),
+        )
+        for raw in store.list_alerts(dataset_id)
+    ]
+    digest = build_digest(findings, alerts)
+    return {**digest.to_dict(), "html": digest.to_html(), "text": digest.to_text()}
+
+
+#: Shared secret for the external scheduler. Render's free tier spins down, so
+#: scheduled work is triggered from outside rather than by a timer in-process
+#: (spec 8 and 9). Without a secret set, the endpoint refuses to run at all
+#: rather than sitting open.
+SCHEDULER_TOKEN = os.environ.get("BUSYLAB_SCHEDULER_TOKEN", "")
+
+
+@app.post("/internal/tick", status_code=202)
+def scheduled_tick(
+    token: str = "",
+    store: JobStore = Depends(get_store),
+) -> dict[str, Any]:
+    """Re-analyse every known dataset, so monitoring is proactive.
+
+    Hit by GitHub Actions on a cron. A free Render web service spins down after
+    inactivity and so cannot host a reliable timer, which is why the trigger
+    lives outside the app entirely.
+    """
+    if not SCHEDULER_TOKEN:
+        raise HTTPException(
+            status_code=503,
+            detail="No scheduler token is configured, so scheduled runs are off.",
+        )
+    # compare_digest to avoid leaking the token a character at a time.
+    import hmac
+
+    if not hmac.compare_digest(token, SCHEDULER_TOKEN):
+        raise HTTPException(status_code=401, detail="Bad scheduler token.")
+
+    queued = []
+    for dataset_id in store.all_dataset_ids():
+        job = store.enqueue(JobKind.ANALYSE, dataset_id)
+        queued.append({"dataset_id": dataset_id, "job_id": job.id})
+
+    return {"queued": len(queued), "jobs": queued}
+
+
 class GoalRequest(BaseModel):
     """A target the business is setting (spec Pillar 4)."""
 

@@ -1,4 +1,13 @@
-import type { Answer, Columns, Goal, Job, NewGoal, Story } from "./types";
+import type {
+  Alert,
+  Answer,
+  Columns,
+  DigestPreview,
+  Goal,
+  Job,
+  NewGoal,
+  Story,
+} from "./types";
 
 const BASE = process.env.NEXT_PUBLIC_API ?? "http://127.0.0.1:8000";
 
@@ -83,6 +92,20 @@ export function deleteGoal(datasetId: string, goalId: string) {
     `/datasets/${datasetId}/goals/${goalId}`,
     { method: "DELETE" }
   );
+}
+
+export function listAlerts(datasetId: string) {
+  return request<{ alerts: Alert[] }>(`/datasets/${datasetId}/alerts`);
+}
+
+export function acknowledgeAlert(datasetId: string, key: string) {
+  return request<void>(`/datasets/${datasetId}/alerts/${key}/acknowledge`, {
+    method: "POST",
+  });
+}
+
+export function getDigest(datasetId: string) {
+  return request<DigestPreview>(`/datasets/${datasetId}/digest`);
 }
 
 export function ask(datasetId: string, question: string) {

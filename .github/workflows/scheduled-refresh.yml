@@ -1,0 +1,44 @@
+name: Scheduled refresh
+
+# Proactive monitoring needs something always awake to trigger it, and a free
+# Render web service spins down after inactivity (spec 9). GitHub Actions on a
+# cron is genuinely free at this scale, so the trigger lives outside the app
+# and simply calls a secured endpoint. Move to Render Cron once already paying
+# for an instance.
+
+on:
+  schedule:
+    # 07:00 UTC every Monday, so the weekly digest lands before the week starts.
+    - cron: "0 7 * * 1"
+    # 07:00 UTC on the 1st, for the monthly review.
+    - cron: "0 7 1 * *"
+  workflow_dispatch: {}
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger a refresh
+        env:
+          API_URL: ${{ secrets.BUSYLAB_API_URL }}
+          TOKEN: ${{ secrets.BUSYLAB_SCHEDULER_TOKEN }}
+        run: |
+          if [ -z "$API_URL" ] || [ -z "$TOKEN" ]; then
+            echo "BUSYLAB_API_URL or BUSYLAB_SCHEDULER_TOKEN is not set."
+            echo "Add both under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+          # A free instance may be asleep, so the first call can be slow.
+          # --max-time is generous and one retry covers the cold start.
+          status=$(curl -sS -o response.json -w "%{http_code}" \
+            --max-time 120 --retry 2 --retry-delay 20 \
+            -X POST "$API_URL/internal/tick?token=$TOKEN")
+
+          echo "HTTP $status"
+          cat response.json || true
+
+          if [ "$status" != "202" ]; then
+            echo "Scheduled refresh failed."
+            exit 1
+          fi

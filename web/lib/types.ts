@@ -160,3 +160,25 @@ export interface Goal {
 }
 
 export type NewGoal = Omit<Goal, "id">;
+
+export interface Alert {
+  key: string;
+  kind: string;
+  level: "high" | "medium" | "good" | "info";
+  title: string;
+  detail: string;
+  subject: string;
+  period: string;
+  finding_id: string | null;
+  acknowledged?: boolean;
+}
+
+export interface DigestPreview {
+  subject: string;
+  headline: string;
+  lines: string[];
+  good_news: string | null;
+  is_empty: boolean;
+  html: string;
+  text: string;
+}

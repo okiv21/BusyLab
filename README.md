@@ -50,7 +50,8 @@ fully without any model configured.
 | 6. Mapping memory, Sheets, folder watch, quality gate | **mapping memory + quality gate done**; Sheets and folder watch not started |
 | 7. Forecasting | **done** (ARIMA, bands mandatory) |
 | 8. Customer intelligence and goals | **done** (Pillars 3 and 4) |
-| 9-11 | not started |
+| 9. Monitoring and alerts | **done** (anomalies, digest, scheduler) |
+| 10-11 | not started |
 
 ## Getting started
 
@@ -195,6 +196,55 @@ Implemented (Pillar 0, the non-obvious layer):
   so `check_non_directive` enforces it mechanically over every summary and the
   test suite fails on a violation. Directive AI carries liability; illuminating
   AI is trusted.
+
+## Monitoring and alerts
+
+The retention layer (spec Pillar 2), and its failure mode is not missing an
+event - it is **alert fatigue**. A system that cries wolf gets muted, and a
+muted system protects nothing. Spec 11 lists sensitivity tuning as an open
+question for exactly this reason, so the bias throughout is towards silence.
+Four separate things hold it back:
+
+**Robust statistics.** Anomalies are found with a median and a median absolute
+deviation, not a mean and a standard deviation. The outlier being hunted sits
+inside both the mean and the standard deviation it would be measured against,
+so it inflates the bar and hides itself. On a series with two spikes, a plain
+z-score reads 3.3 and misses them; the robust score reads 9.1.
+
+**Seasonality first.** A December spike in a business that spikes every
+December is not an anomaly.
+
+**Multiple comparisons.** Twenty products checked weekly is twenty tests a
+week, so about one false alarm a week by construction. Product anomalies are
+FDR-corrected as a family, same as segmentation and baskets.
+
+**Restraint.** A materiality floor, a minimum revenue share before a product
+gets its own alert, a hard cap per run, consecutive periods collapsed into one
+alert rather than one per month, and a stable dedupe key so an event fires
+once. On a quiet business the output is zero alerts, and there is a test for it.
+
+### The digest
+
+A "business in review" email that reads in under a minute: the largest movement
+first, two supporting lines, new alerts, and one good thing where there is one.
+A weekly email that is only bad news gets filtered, and then the bad news stops
+arriving too. An empty digest is not sent at all - sending nothing trains people
+to ignore the ones that say something.
+
+Delivery is pluggable and defaults to writing to the log, so the digest is fully
+buildable and testable with no email account. Plain SMTP when configured, chosen
+over a vendor SDK for the same reason the LLM provider is a raw POST.
+
+### The scheduler
+
+A free Render web service spins down after inactivity and cannot host a
+reliable timer, so the trigger lives outside the app: GitHub Actions on a cron
+hitting `POST /internal/tick` with a shared secret
+(`.github/workflows/scheduled-refresh.yml`). If no token is configured the
+endpoint returns 503 rather than sitting open.
+
+Two secrets are needed in the repo before it does anything:
+`BUSYLAB_API_URL` and `BUSYLAB_SCHEDULER_TOKEN`.
 
 ## Goal tracking
 

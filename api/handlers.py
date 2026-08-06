@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from busylab import loading
+from busylab.alerts import build_alerts
+from busylab.digest import build_digest, send_digest
 from busylab.analysis import analyse
 from busylab.detection import detect
 from busylab.detection.engine import ConfirmationPrompt, DetectionResult
@@ -172,6 +174,15 @@ def handle_analyse(job: Job, store: JobStore) -> dict[str, Any]:
         payload = story.to_dict()
         payload["chips"] = []
         payload["columns"] = []
+        # A refresh that failed the gate is exactly what nobody is watching
+        # for once ingestion is unattended, so it still raises alerts.
+        held_alerts = build_alerts(
+            None, [], story.quality,
+            already_sent=store.sent_alert_keys(job.dataset_id),
+        )
+        if held_alerts:
+            store.record_alerts(job.dataset_id, [a.to_dict() for a in held_alerts])
+        payload["new_alerts"] = [a.to_dict() for a in held_alerts]
         store.save_story(job.dataset_id, payload)
         return payload
 
@@ -187,6 +198,24 @@ def handle_analyse(job: Job, store: JobStore) -> dict[str, Any]:
         narration = narrate(finding, provider, cache=cache)
         raw["summary"] = narration.text
         raw["narrated_by"] = narration.source
+
+    # Proactive monitoring (spec Pillar 2). Alerts are derived from the
+    # analysis that just ran, deduplicated against everything this dataset has
+    # already been told, and recorded so the same event never fires twice.
+    store.set_step(job.id, "checking what changed")
+    try:
+        alerts = build_alerts(
+            story.frame,
+            story.findings,
+            story.quality,
+            already_sent=store.sent_alert_keys(job.dataset_id),
+        )
+        if alerts:
+            store.record_alerts(job.dataset_id, [a.to_dict() for a in alerts])
+        payload["new_alerts"] = [a.to_dict() for a in alerts]
+    except Exception as exc:  # monitoring must not sink the story
+        payload["new_alerts"] = []
+        payload.setdefault("errors", []).append(f"alerting failed: {exc}")
 
     columns = set(story.frame.data.columns) if story.frame else set()
     payload["chips"] = [
