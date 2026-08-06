@@ -321,6 +321,67 @@ def _rebuild_findings(story: dict[str, Any]) -> list:
     return out
 
 
+class GoalRequest(BaseModel):
+    """A target the business is setting (spec Pillar 4)."""
+
+    metric: str = Field(default="revenue", pattern="^(revenue|profit)$")
+    target: float = Field(gt=0)
+    start: str
+    end: str
+    label: str = Field(default="", max_length=80)
+
+
+@app.get("/datasets/{dataset_id}/goals")
+def list_goals(
+    dataset_id: str, store: JobStore = Depends(get_store)
+) -> dict[str, Any]:
+    if store.get_dataset(dataset_id) is None:
+        raise HTTPException(status_code=404, detail="No such dataset.")
+    return {"goals": store.list_goals(dataset_id)}
+
+
+@app.post("/datasets/{dataset_id}/goals", status_code=201)
+def create_goal(
+    dataset_id: str, body: GoalRequest, store: JobStore = Depends(get_store)
+) -> dict[str, Any]:
+    """Set a target, and re-run the analysis so the story includes it."""
+    if store.get_dataset(dataset_id) is None:
+        raise HTTPException(status_code=404, detail="No such dataset.")
+
+    from busylab.goals import Goal
+
+    try:
+        # Validate through the engine's own model rather than duplicating the
+        # rules here, so the API cannot accept a goal the engine rejects.
+        Goal.from_dict(
+            {
+                "id": "validate",
+                "metric": body.metric,
+                "target": body.target,
+                "start": body.start,
+                "end": body.end,
+            }
+        )
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    goal = store.add_goal(
+        dataset_id, body.metric, body.target, body.start, body.end, body.label
+    )
+    job = store.enqueue(JobKind.ANALYSE, dataset_id)
+    return {"goal": goal, "job_id": job.id}
+
+
+@app.delete("/datasets/{dataset_id}/goals/{goal_id}", status_code=202)
+def delete_goal(
+    dataset_id: str, goal_id: str, store: JobStore = Depends(get_store)
+) -> dict[str, Any]:
+    if not store.delete_goal(dataset_id, goal_id):
+        raise HTTPException(status_code=404, detail="No such goal.")
+    job = store.enqueue(JobKind.ANALYSE, dataset_id)
+    return {"deleted": goal_id, "job_id": job.id}
+
+
 @app.delete("/datasets/{dataset_id}", status_code=204)
 def delete_dataset(dataset_id: str, store: JobStore = Depends(get_store)) -> None:
     """Remove an upload and its raw file.

@@ -1095,6 +1095,178 @@ function CohortHeatmap({ finding }: { finding: Finding }) {
   );
 }
 
+/* --- goal pace: will the target be hit? -------------------------------- */
+
+function ProgressArc({ finding }: { finding: Finding }) {
+  const d = finding.chart_data ?? {};
+  const target = Number(d.target) || 0;
+  const actual = Number(d.actual) || 0;
+  const projected = Number(d.projected) || 0;
+  const pace = (d.pace ?? []) as {
+    period: string;
+    actual: number;
+    needed: number;
+    ahead: boolean;
+  }[];
+  if (!target) return <Empty label="No target set." />;
+
+  // A 180 degree arc. Banked so far is solid; the projection is a marker, so
+  // the two are never confused for one another.
+  const R = 100;
+  const CX = 130;
+  const CY = 140;
+  const clampedActual = Math.max(0, Math.min(actual / target, 1));
+  const clampedProjected = Math.max(0, Math.min(projected / target, 1.2));
+
+  const point = (fraction: number) => {
+    const angle = Math.PI * (1 - Math.min(fraction, 1));
+    return [CX + R * Math.cos(angle), CY - R * Math.sin(angle)];
+  };
+  const [ax, ay] = point(clampedActual);
+  const [px, py] = point(Math.min(clampedProjected, 1));
+  const largeArc = clampedActual > 0.5 ? 1 : 0;
+  const onTrack = projected >= target;
+
+  return (
+    <div style={{ display: "flex", gap: 30, flexWrap: "wrap", alignItems: "center" }}>
+      <svg viewBox="0 0 260 165" style={{ width: 260, flex: "0 0 auto" }}>
+        <path
+          d={`M ${CX - R} ${CY} A ${R} ${R} 0 0 1 ${CX + R} ${CY}`}
+          fill="none"
+          stroke="#f0e7df"
+          strokeWidth={18}
+          strokeLinecap="round"
+        />
+        {clampedActual > 0.001 && (
+          <path
+            d={`M ${CX - R} ${CY} A ${R} ${R} 0 ${largeArc} 1 ${ax} ${ay}`}
+            fill="none"
+            stroke={onTrack ? GOOD : ACCENT}
+            strokeWidth={18}
+            strokeLinecap="round"
+          />
+        )}
+        {/* Where the projection lands, distinct from what is banked. */}
+        <circle
+          cx={px}
+          cy={py}
+          r={7}
+          fill="#fff"
+          stroke={onTrack ? "#177e5b" : "#b06a1e"}
+          strokeWidth={3}
+        />
+        <text
+          x={CX}
+          y={CY - 28}
+          textAnchor="middle"
+          fontFamily="Sora"
+          fontSize={28}
+          fontWeight={800}
+          fill="#211c15"
+        >
+          {compact(actual)}
+        </text>
+        <text
+          x={CX}
+          y={CY - 8}
+          textAnchor="middle"
+          fontFamily="Albert Sans"
+          fontSize={12}
+          fill={INK_LIGHT}
+        >
+          of {compact(target)} · {Math.round((actual / target) * 100)}%
+        </text>
+      </svg>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 12, flex: "1 1 240px" }}>
+        <div style={{ display: "flex", gap: 22, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ font: "700 20px Sora" }}>{compact(projected)}</div>
+            <div style={{ fontSize: 12.5, color: INK_LIGHT }}>projected total</div>
+          </div>
+          <div>
+            <div
+              style={{
+                font: "700 20px Sora",
+                color: onTrack ? "#177e5b" : "#c74722",
+              }}
+            >
+              {projected >= target ? "+" : "−"}
+              {compact(Math.abs(target - projected))}
+            </div>
+            <div style={{ fontSize: 12.5, color: INK_LIGHT }}>
+              {projected >= target ? "surplus at this pace" : "gap at this pace"}
+            </div>
+          </div>
+        </div>
+
+        {pace.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            {pace.slice(-6).map((row) => {
+              const width = Math.max(
+                2,
+                Math.min((row.actual / Math.max(row.needed, 1)) * 100, 130)
+              );
+              return (
+                <div
+                  key={row.period}
+                  style={{ display: "flex", alignItems: "center", gap: 10 }}
+                >
+                  <span
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      width: 52,
+                      color: INK_LIGHT,
+                    }}
+                  >
+                    {row.period.slice(0, 7)}
+                  </span>
+                  <div
+                    style={{
+                      flex: 1,
+                      position: "relative",
+                      height: 14,
+                      borderRadius: 999,
+                      background: "#f0e7df",
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: "absolute",
+                        inset: "0 auto 0 0",
+                        width: `${Math.min(width, 100)}%`,
+                        borderRadius: 999,
+                        background: row.ahead ? GOOD : ACCENT,
+                      }}
+                    />
+                    {/* The pace the target needs. */}
+                    <div
+                      style={{
+                        position: "absolute",
+                        left: "100%",
+                        top: -3,
+                        bottom: -3,
+                        width: 2.5,
+                        borderRadius: 2,
+                        background: "#211c15",
+                        transform: "translateX(-2px)",
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+            <div style={{ fontSize: 11.5, color: INK_LIGHT }}>
+              The dark tick is the pace the target needs.
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* --- router ------------------------------------------------------------ */
 
 export default function Chart({ finding }: { finding: Finding }) {
@@ -1126,6 +1298,8 @@ export default function Chart({ finding }: { finding: Finding }) {
       return <SegmentQuadrant finding={finding} />;
     case "cohort_heatmap":
       return <CohortHeatmap finding={finding} />;
+    case "progress_arc":
+      return <ProgressArc finding={finding} />;
     default:
       // A finding type whose chart is not built yet still shows its sentence
       // rather than an empty frame or a wrong picture.

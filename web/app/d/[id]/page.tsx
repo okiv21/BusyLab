@@ -111,7 +111,17 @@ export default function DatasetPage() {
         )}
 
         {stage === "story" && story && !story.held && (
-          <StoryView story={story} datasetId={id} />
+          <StoryView
+            story={story}
+            datasetId={id}
+            onReanalysed={async () => {
+              try {
+                setStory(await getStory(id));
+              } catch {
+                /* keep showing the story we have */
+              }
+            }}
+          />
         )}
 
         {stage === "error" && (

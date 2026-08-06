@@ -49,7 +49,7 @@ fully without any model configured.
 | 5. Background jobs | **done** (API, worker, job table) |
 | 6. Mapping memory, Sheets, folder watch, quality gate | **mapping memory + quality gate done**; Sheets and folder watch not started |
 | 7. Forecasting | **done** (ARIMA, bands mandatory) |
-| 8. Customer intelligence and goals | **Pillar 3 done**; goals (Pillar 4) not started |
+| 8. Customer intelligence and goals | **done** (Pillars 3 and 4) |
 | 9-11 | not started |
 
 ## Getting started
@@ -172,6 +172,7 @@ Implemented (Pillar 0, the non-obvious layer):
 | `rfm_segments` | Champions, At risk, Lost, New - sorted automatically |
 | `cohort_retention` | Does each month's intake stick? |
 | `basket_analysis` | What gets bought together, beyond chance |
+| `goal_pace` | Will the target be hit, and where does the gap live |
 
 ### Decisions worth knowing
 
@@ -194,6 +195,33 @@ Implemented (Pillar 0, the non-obvious layer):
   so `check_non_directive` enforces it mechanically over every summary and the
   test suite fails on a violation. Directive AI carries liability; illuminating
   AI is trusted.
+
+## Goal tracking
+
+The one place the user supplies something rather than reading a result: a
+metric, an amount and a window. Everything after that is computed.
+
+Spec Pillar 4's example sets the bar - *"you will reach 87 percent of your Q1
+target, and the gap is entirely Product 4's decline"* - and both halves matter.
+A percentage tells the owner they have a problem; the attribution tells them
+where it lives. The gap is decomposed into per-product changes that sum to it,
+rather than naming a plausible culprit.
+
+Three details:
+
+- **The projection carries a band**, reusing the ARIMA machinery. That lets the
+  UI distinguish "you will miss this" from "you might miss this", which a single
+  projected number cannot express.
+- **"Now" is the last sale in the file**, never today. A file uploaded three
+  weeks late must not report three weeks of zero sales as a collapse in pace.
+- **A closed window is not projected.** It reports what actually happened. A
+  window barely begun reports nothing at all rather than extrapolating from a
+  few days.
+
+Goals live in the API (`POST /datasets/{id}/goals`) and are validated through
+the engine's own model, so the API cannot accept a goal the engine would reject.
+Setting one queues a re-analysis, and the target appears in the story like any
+other finding.
 
 ## Customer intelligence
 

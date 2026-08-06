@@ -1,4 +1,4 @@
-import type { Answer, Columns, Job, Story } from "./types";
+import type { Answer, Columns, Goal, Job, NewGoal, Story } from "./types";
 
 const BASE = process.env.NEXT_PUBLIC_API ?? "http://127.0.0.1:8000";
 
@@ -64,6 +64,25 @@ export function confirmColumns(datasetId: string, roles: Record<string, string>)
 
 export function getStory(datasetId: string) {
   return request<Story>(`/datasets/${datasetId}/story`);
+}
+
+export function listGoals(datasetId: string) {
+  return request<{ goals: Goal[] }>(`/datasets/${datasetId}/goals`);
+}
+
+export function createGoal(datasetId: string, goal: NewGoal) {
+  return request<{ goal: Goal; job_id: string }>(`/datasets/${datasetId}/goals`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(goal),
+  });
+}
+
+export function deleteGoal(datasetId: string, goalId: string) {
+  return request<{ deleted: string; job_id: string }>(
+    `/datasets/${datasetId}/goals/${goalId}`,
+    { method: "DELETE" }
+  );
 }
 
 export function ask(datasetId: string, question: string) {

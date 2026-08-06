@@ -9,19 +9,36 @@
  * engine already produced, never sideways into doing the analysis themselves.
  */
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import FindingCard from "./FindingCard";
-import { ask } from "@/lib/api";
-import type { Answer, Chip, Finding, Story } from "@/lib/types";
+import { ask, listGoals, waitForJob } from "@/lib/api";
+import GoalPanel from "./GoalPanel";
+import type { Answer, Chip, Finding, Goal, Story } from "@/lib/types";
 
 export default function StoryView({
   story,
   datasetId,
+  onReanalysed,
 }: {
   story: Story;
   datasetId: string;
+  onReanalysed?: () => void;
 }) {
+  const [goals, setGoals] = useState<Goal[]>([]);
+
+  const refreshGoals = useCallback(async () => {
+    try {
+      setGoals((await listGoals(datasetId)).goals);
+    } catch {
+      /* goals are additive; failing to load them must not break the story */
+    }
+  }, [datasetId]);
+
+  useEffect(() => {
+    refreshGoals();
+  }, [refreshGoals]);
+
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState<Answer | null>(null);
   const [thinking, setThinking] = useState(false);
@@ -266,6 +283,19 @@ export default function StoryView({
           )}
         </div>
       )}
+
+      {/* --- targets (spec Pillar 4) ------------------------------------ */}
+      <GoalPanel
+        datasetId={datasetId}
+        goals={goals}
+        hasProfit={story.columns?.includes("profit") ?? false}
+        onChanged={async () => {
+          await refreshGoals();
+          // Setting a target queues a re-analysis, so the story is refetched
+          // once the worker has produced one that includes it.
+          setTimeout(() => onReanalysed?.(), 1200);
+        }}
+      />
 
       {/* --- what one more column would buy ----------------------------- */}
       {locked.length > 0 && (

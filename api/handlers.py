@@ -15,6 +15,7 @@ from busylab import loading
 from busylab.analysis import analyse
 from busylab.detection import detect
 from busylab.detection.engine import ConfirmationPrompt, DetectionResult
+from busylab.goals import Goal
 from busylab.narration import from_env, narrate, suggest_chips
 from busylab.roles import ROLE_SPECS, TIER_SPECS, Role
 
@@ -159,7 +160,13 @@ def handle_analyse(job: Job, store: JobStore) -> dict[str, Any]:
     previous = store.recall_snapshot(result.fingerprint)
 
     store.set_step(job.id, "checking against normal variation")
-    story = analyse(frame, result, previous_snapshot=previous)
+    goals = []
+    for raw in store.list_goals(job.dataset_id):
+        try:
+            goals.append(Goal.from_dict(raw))
+        except (ValueError, KeyError):
+            continue  # a malformed goal must not sink the whole analysis
+    story = analyse(frame, result, previous_snapshot=previous, goals=goals)
 
     if story.held:
         payload = story.to_dict()

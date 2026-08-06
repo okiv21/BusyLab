@@ -121,6 +121,20 @@ CREATE TABLE IF NOT EXISTS snapshots (
     snapshot     TEXT NOT NULL,
     created_at   TEXT NOT NULL
 );
+
+-- Targets the business set for itself (spec Pillar 4). "start" and "end" are
+-- spelled out because "end" is a reserved word in SQL.
+CREATE TABLE IF NOT EXISTS goals (
+    id          TEXT PRIMARY KEY,
+    dataset_id  TEXT NOT NULL,
+    metric      TEXT NOT NULL,
+    target      REAL NOT NULL,
+    start_date  TEXT NOT NULL,
+    end_date    TEXT NOT NULL,
+    label       TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS goals_dataset ON goals (dataset_id);
 """
 
 
@@ -231,6 +245,60 @@ class JobStore:
                 "SELECT snapshot FROM snapshots WHERE fingerprint = ?", (fingerprint,)
             ).fetchone()
         return json.loads(row["snapshot"]) if row else None
+
+    # -- goals (spec Pillar 4) -------------------------------------------
+
+    def add_goal(
+        self,
+        dataset_id: str,
+        metric: str,
+        target: float,
+        start: str,
+        end: str,
+        label: str = "",
+    ) -> dict[str, Any]:
+        goal_id = uuid.uuid4().hex[:12]
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO goals (id, dataset_id, metric, target, start_date, "
+                "end_date, label, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (goal_id, dataset_id, metric, target, start, end, label, _now()),
+            )
+        return {
+            "id": goal_id,
+            "metric": metric,
+            "target": target,
+            "start": start,
+            "end": end,
+            "label": label,
+        }
+
+    def list_goals(self, dataset_id: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, metric, target, start_date, end_date, label "
+                "FROM goals WHERE dataset_id = ? ORDER BY created_at",
+                (dataset_id,),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "metric": row["metric"],
+                "target": row["target"],
+                "start": row["start_date"],
+                "end": row["end_date"],
+                "label": row["label"],
+            }
+            for row in rows
+        ]
+
+    def delete_goal(self, dataset_id: str, goal_id: str) -> bool:
+        with self._connect() as conn:
+            changed = conn.execute(
+                "DELETE FROM goals WHERE id = ? AND dataset_id = ?",
+                (goal_id, dataset_id),
+            ).rowcount
+        return bool(changed)
 
     # -- jobs -------------------------------------------------------------
 

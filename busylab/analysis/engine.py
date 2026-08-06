@@ -20,10 +20,12 @@ import pandas as pd
 
 from ..detection.engine import DetectionResult, detect
 from ..findings import Finding, Severity, check_non_directive
+from ..goals import Goal
 from ..quality import QualityReport
 from ..quality import check as check_quality
 from ..roles import TIER_SPECS, Tier
 from . import core, customers, forecast, segments
+from . import goals as goals_module
 from .dataset import SalesFrame, build
 
 log = logging.getLogger(__name__)
@@ -131,6 +133,7 @@ def analyse(
     strict: bool = False,
     previous_snapshot: dict | None = None,
     skip_quality_gate: bool = False,
+    goals: list[Goal] | None = None,
 ) -> AnalysisResult:
     """Run the engine over a raw frame.
 
@@ -140,6 +143,9 @@ def analyse(
 
     ``previous_snapshot`` is the quality snapshot from the last run that
     passed, which is what makes "the row count halved" answerable.
+
+    ``goals`` are targets the business has set. They are an input rather than
+    something the engine discovers, so they are passed in the same way.
     """
     detection = detection if detection is not None else detect(raw)
     result = AnalysisResult(detection=detection, tiers=dict(detection.tiers))
@@ -178,6 +184,15 @@ def analyse(
                 raise
             log.warning("analysis %s failed: %s", analysis.__name__, exc)
             result.errors.append(f"{analysis.__name__} could not run: {exc}")
+
+    if goals:
+        try:
+            collected.extend(goals_module.goal_pace(frame, goals) or [])
+        except Exception as exc:
+            if strict:
+                raise
+            log.warning("goal tracking failed: %s", exc)
+            result.errors.append(f"goal tracking could not run: {exc}")
 
     for finding in collected:
         problems = check_non_directive(finding.summary)

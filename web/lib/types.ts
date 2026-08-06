@@ -149,3 +149,14 @@ export interface Answer {
   answer?: string;
   suggestions?: Chip[];
 }
+
+export interface Goal {
+  id: string;
+  metric: "revenue" | "profit";
+  target: number;
+  start: string;
+  end: string;
+  label: string;
+}
+
+export type NewGoal = Omit<Goal, "id">;
