@@ -491,6 +491,14 @@ def _explain(dsn: str, message: str) -> str:
             "editing the direct one."
         )
 
+    if "enotfound" in lowered or "tenant/user" in lowered and "not found" in lowered:
+        return (
+            f"The pooler does not recognise the project in {user!r}. Either "
+            "the project ref is mistyped, or the project has been paused or "
+            "deleted in the Supabase dashboard. Copy the string again from "
+            "Connect."
+        )
+
     if "circuitbreaker" in lowered or "too many authentication failures" in lowered:
         return (
             "Supabase has temporarily blocked this address after repeated "
@@ -501,10 +509,19 @@ def _explain(dsn: str, message: str) -> str:
 
     if "password authentication failed" in lowered:
         hint = _username_hint(pooled, user)
+        if hint:
+            # The username is the likelier culprit, so lead with it.
+            return (
+                f"The database rejected the credentials for user {user!r}. "
+                f"{hint} If the username is right, then the password is wrong."
+            )
         return (
-            f"The database rejected the credentials for user {user!r}. {hint}"
-            " Otherwise the password is wrong, or it contains a character "
-            "such as @ : / or ? that must be percent-encoded inside a URL."
+            f"The username {user!r} looks right, so this is the password. "
+            "It is the database password set when the project was created, "
+            "not the password for your Supabase account - reset it under "
+            "Settings, Database. Note that a password containing @ / ? or # "
+            "must be percent-encoded inside a URL, so choosing letters and "
+            "numbers only avoids the problem."
         )
 
     if "does not exist" in lowered and "database" in lowered:

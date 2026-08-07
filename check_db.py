@@ -24,18 +24,91 @@ DIM = "\033[2m"
 OFF = "\033[0m"
 
 
+#: Characters that mean something structural inside a URL, so a password
+#: containing one is silently mis-parsed rather than rejected.
+_MUST_ENCODE = {
+    "@": "%40",
+    "/": "%2F",
+    "?": "%3F",
+    "#": "%23",
+    "[": "%5B",
+    "]": "%5D",
+}
+
+
+def _encoding_problem(dsn: str) -> str:
+    """Spot a password that a URL parser will mangle.
+
+    This is worth checking explicitly rather than leaving to the connection
+    error, because the failure is silent: a `#` truncates the password at that
+    point and the database simply reports the wrong password, with nothing
+    hinting that half of it never arrived.
+    """
+    body = dsn.split("://", 1)[-1]
+    if "@" not in body:
+        return ""
+
+    # The host is after the *last* @, so anything before it is credentials.
+    credentials = body.rsplit("@", 1)[0]
+    if ":" not in credentials:
+        return ""
+
+    password = credentials.split(":", 1)[1]
+    found = [c for c in _MUST_ENCODE if c in password]
+    if not found:
+        return ""
+
+    fixes = ", ".join(f"{c} as {_MUST_ENCODE[c]}" for c in found)
+    return (
+        f"Your password contains {' and '.join(found)}, which a URL reads as "
+        f"punctuation rather than as part of the password.\n"
+        f"Either write {fixes}, or reset the password to letters and numbers "
+        f"only, which avoids the question."
+    )
+
+
 def _describe(dsn: str) -> None:
-    """Show what the string says, without ever showing the password."""
-    parsed = urlparse(dsn)
-    pooled = "pooler.supabase.com" in (parsed.hostname or "")
+    """Show what the string says, without ever showing the password.
+
+    Defensive throughout: this runs on strings that are already suspect, and a
+    traceback here would hide the diagnosis it exists to give. A malformed URL
+    is the normal case, not the exceptional one.
+    """
+    try:
+        parsed = urlparse(dsn)
+        host = parsed.hostname
+        port = parsed.port
+        user = parsed.username
+        database = (parsed.path or "/").lstrip("/")
+        has_password = bool(parsed.password)
+    except ValueError:
+        print(f"\n  {YELLOW}This does not parse as a URL at all.{OFF}")
+        print(
+            "  It should begin postgresql:// and look like\n"
+            "  postgresql://user:password@host:6543/postgres\n"
+        )
+        return
+
+    pooled = "pooler.supabase.com" in (host or "")
     print()
-    print(f"  host      {parsed.hostname}")
-    print(f"  port      {parsed.port}")
-    print(f"  user      {parsed.username}")
-    print(f"  database  {(parsed.path or '/').lstrip('/')}")
-    print(f"  password  {DIM}{'set' if parsed.password else 'MISSING'}{OFF}")
+    print(f"  host      {host}")
+    print(f"  port      {port}")
+    print(f"  user      {user}")
+    print(f"  database  {database}")
+    print(f"  password  {DIM}{'set' if has_password else 'MISSING'}{OFF}")
     print(f"  kind      {'connection pooler' if pooled else 'direct connection'}")
     print()
+
+    # Cheap sanity checks that catch a mangled string before the network does.
+    if pooled and user and "." not in user:
+        print(
+            f"  {YELLOW}The username has no project ref. On the pooler it "
+            f"must be postgres.<your-project-ref>.{OFF}\n"
+        )
+    if pooled and port != 6543:
+        print(
+            f"  {YELLOW}The pooler usually listens on 6543, not {port}.{OFF}\n"
+        )
 
 
 def main() -> int:
@@ -62,6 +135,10 @@ def main() -> int:
             "lost it."
         )
         return 1
+
+    problem = _encoding_problem(dsn)
+    if problem:
+        print(f"\n{YELLOW}{problem}{OFF}")
 
     _describe(dsn)
     print("Connecting…")
