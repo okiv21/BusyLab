@@ -1,12 +1,20 @@
-# Render blueprint: a thin API and a separate background worker.
+# Render blueprint.
 #
-# Spec 9's architecture split. The worker is its own service so heavy jobs -
-# detection, significance testing, ARIMA - never block an HTTP request. Both
-# read the same Supabase Postgres and the same Supabase Storage bucket, because
-# Render's own disk is ephemeral and loses everything on spin-down.
+# Spec 9 wants the worker as its own service so a heavy job never blocks an
+# HTTP request. Render does not offer a free instance type for background
+# workers - they start at $7/month - so the free configuration runs the worker
+# in-process on the web service instead, and the separate service below is
+# commented out ready for the upgrade.
 #
-# Secrets are marked sync:false, which means Render prompts for them rather
-# than reading them from this file. Nothing sensitive belongs in the repository.
+# In-process is genuinely workable here rather than a fudge. The queue lives in
+# Postgres, so nothing is lost while the instance sleeps: the GitHub Actions
+# cron wakes the service, the worker thread starts with it and drains whatever
+# accumulated. The cost is that a large analysis competes for CPU with the API
+# on a small instance, which shows up as a sluggish request rather than a
+# failed one.
+#
+# Secrets are marked sync:false, so Render prompts for them rather than reading
+# them from this file. Nothing sensitive belongs in the repository.
 
 services:
   - type: web
@@ -20,10 +28,10 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11"
-      # The web service must not also run a worker, or jobs get claimed by
-      # whichever process wins and the API stalls behind an analysis.
+      # Run the worker in this process. Set to "0" only once the separate
+      # worker service below is running, or nothing will claim jobs at all.
       - key: BUSYLAB_INLINE_WORKER
-        value: "0"
+        value: "1"
       - key: DATABASE_URL
         sync: false
       - key: SUPABASE_URL
@@ -40,36 +48,58 @@ services:
       # Optional. Without it the engine's own wording is used.
       - key: GROQ_API_KEY
         sync: false
-
-  - type: worker
-    name: busylab-worker
-    runtime: python
-    plan: free
-    region: frankfurt
-    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
-    startCommand: python worker.py
-    envVars:
-      - key: PYTHON_VERSION
-        value: "3.11"
-      - key: DATABASE_URL
-        sync: false
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_SERVICE_KEY
-        sync: false
-      - key: SUPABASE_BUCKET
-        value: uploads
-      - key: GROQ_API_KEY
-        sync: false
-      # Digest delivery. Unset means the digest is logged, not sent.
+      # Digest delivery. These live here because the worker runs here. Move
+      # them to the worker service if you split it out.
       - key: SMTP_HOST
         sync: false
+      - key: SMTP_PORT
+        value: "587"
       - key: SMTP_USER
         sync: false
       - key: SMTP_PASSWORD
         sync: false
       - key: SMTP_FROM
         sync: false
-      # Where the weekly digest lands. Unset means it is logged, not sent.
+      # Fallback recipient. Each dataset can carry its own instead.
       - key: BUSYLAB_DIGEST_TO
         sync: false
+
+# ---------------------------------------------------------------------------
+# The separate worker, for when the analyses outgrow a shared free instance.
+#
+# Uncomment this, set BUSYLAB_INLINE_WORKER to "0" above, and move the SMTP
+# variables here. Requires a paid plan: there is no free background worker.
+# Safe to run alongside the API, and safe to run several of - the Postgres
+# claim uses SELECT FOR UPDATE SKIP LOCKED, so workers take different jobs.
+# ---------------------------------------------------------------------------
+#
+#  - type: worker
+#    name: busylab-worker
+#    runtime: python
+#    plan: starter
+#    region: frankfurt
+#    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+#    startCommand: python worker.py
+#    envVars:
+#      - key: PYTHON_VERSION
+#        value: "3.11"
+#      - key: DATABASE_URL
+#        sync: false
+#      - key: SUPABASE_URL
+#        sync: false
+#      - key: SUPABASE_SERVICE_KEY
+#        sync: false
+#      - key: SUPABASE_BUCKET
+#        value: uploads
+#      - key: GROQ_API_KEY
+#        sync: false
+#      - key: SMTP_HOST
+#        sync: false
+#      - key: SMTP_USER
+#        sync: false
+#      - key: SMTP_PASSWORD
+#        sync: false
+#      - key: SMTP_FROM
+#        sync: false
+#      - key: BUSYLAB_DIGEST_TO
+#        sync: false

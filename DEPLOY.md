@@ -81,10 +81,23 @@ run.
 
 ## 2. Render (API + worker)
 
-1. **New → Blueprint**, point it at this repository. Render reads
-   `render.yaml` and creates two services: `busylab-api` and `busylab-worker`.
-2. It will prompt for the secrets marked `sync: false`. Set these on **both**
-   services:
+1. **New - Blueprint**, point it at this repository. Render reads
+   `render.yaml` and creates one service, `busylab-api`.
+
+   > **Only one service, and that is deliberate.** Spec 9 wants the worker
+   > separate so a heavy analysis cannot block an HTTP request, but Render has
+   > no free instance type for background workers - they start at $7/month. So
+   > the free configuration runs the worker in-process
+   > (`BUSYLAB_INLINE_WORKER=1`) and `render.yaml` carries the separate service
+   > commented out, ready to uncomment when the analyses outgrow a shared
+   > instance.
+   >
+   > This works rather than merely compiles: the queue lives in Postgres, so
+   > nothing is lost while the instance sleeps. The cron wakes it, the worker
+   > thread starts with it, and it drains whatever accumulated. The cost is
+   > that a large analysis competes for CPU with the API, which shows up as a
+   > slow request rather than a failed one.
+2. It will prompt for the secrets marked `sync: false`:
 
    | Variable | Value |
    |---|---|
@@ -92,16 +105,12 @@ run.
    | `SUPABASE_URL` | the Supabase project URL |
    | `SUPABASE_SERVICE_KEY` | the `service_role` key |
 
-   On **`busylab-api`** only:
-
-   | Variable | Value |
-   |---|---|
    | `BUSYLAB_CORS` | your Vercel URL, e.g. `https://busylab.vercel.app` - no trailing slash |
    | `BUSYLAB_SCHEDULER_TOKEN` | a long random string you invent |
 
-   Optional on both: `GROQ_API_KEY` for nicer wording. Optional on the worker:
-   `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` to actually send the
-   digest.
+   Optional: `GROQ_API_KEY` for nicer wording, and the `SMTP_*` variables plus
+   `BUSYLAB_DIGEST_TO` to actually send the digest. They go on this service
+   because the worker runs here.
 
 3. Wait for both to go green, then check:
    ```
@@ -291,6 +300,15 @@ true:
    after a successful ingest and keeps the parsed result is the cheap fix.
 3. **Narration calls**, as usage grows. Already cached per finding, so a
    sentence is only paid for when the numbers behind it change.
+
+## If the build fails
+
+| What you see | What it means |
+|---|---|
+| `A free instance type is not available for services of type worker` | An older `render.yaml`. Background workers are paid-only on Render; pull the latest, which runs the worker in-process. |
+| `No matching distribution found for pandas==...` | An older `requirements.txt` with exact pins resolved on a different OS and Python. The current file uses bounded ranges so pip picks whatever the target platform actually has. |
+| `ModuleNotFoundError: No module named 'api'` | The service's root directory is set to something other than the repository root. The API lives at the top level; only the *frontend* uses a root of `web`. |
+| Build succeeds, service will not start | Check the start command is `uvicorn api.main:app --host 0.0.0.0 --port $PORT`. Omitting `--host 0.0.0.0` binds to localhost and Render's health check never reaches it. |
 
 ## If the database will not connect
 
