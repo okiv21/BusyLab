@@ -70,6 +70,17 @@ your laptop restarts.
    Miss one and uploads of that format fail with a bucket error rather than
    anything BusyLab can explain, so leaving the restriction off is a reasonable
    choice too - the API already refuses anything that is not a spreadsheet.
+
+   > **The name you give the bucket is the name you must configure.** It goes
+   > in `SUPABASE_BUCKET`, and it is case-sensitive: `Busylab` and `busylab`
+   > are different buckets. Supabase reports a name it does not recognise with
+   > the same `NoSuchBucket` it uses for a bucket that was never created, so a
+   > capital letter in the wrong place looks exactly like having skipped this
+   > step. `check_storage.py` lists the real names for this reason.
+   >
+   > Note also that Storage has an **S3 Access Keys** feature. That is a
+   > different way of connecting and BusyLab does not use it - you need a
+   > bucket, not an access key.
 4. **Project Settings → API.** Copy the **Project URL** and the
    **`service_role`** key.
 
@@ -138,6 +149,7 @@ A third check comes in later, once the API is deployed - see the end of step 2.
    | `DATABASE_URL` | the Supabase pooler URI from step 1 |
    | `SUPABASE_URL` | the Supabase project URL |
    | `SUPABASE_SERVICE_KEY` | the `service_role` key |
+   | `SUPABASE_BUCKET` | the bucket's name, exactly as Storage shows it |
    | `BUSYLAB_CORS` | your Vercel URL, e.g. `https://busylab.vercel.app` - no trailing slash |
    | `BUSYLAB_SCHEDULER_TOKEN` | a long random string you invent |
 

@@ -38,8 +38,16 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
+      # The bucket's name, exactly as it appears under Storage - it is
+      # case-sensitive, and Supabase reports a name it does not recognise
+      # the same way it reports one that does not exist.
+      #
+      # sync:false rather than a default on purpose. A value declared here
+      # is reapplied on every blueprint sync, so a name corrected in the
+      # dashboard would be silently reverted and uploads would start failing
+      # again with no change that anyone made.
       - key: SUPABASE_BUCKET
-        value: uploads
+        sync: false
       # The deployed frontend origin. A trailing slash breaks the match.
       - key: BUSYLAB_CORS
         sync: false
@@ -90,7 +98,7 @@ services:
 #      - key: SUPABASE_SERVICE_KEY
 #        sync: false
 #      - key: SUPABASE_BUCKET
-#        value: uploads
+#        sync: false
 #      - key: GROQ_API_KEY
 #        sync: false
 #      - key: SMTP_HOST
