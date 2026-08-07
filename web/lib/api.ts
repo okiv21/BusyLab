@@ -17,15 +17,42 @@ class ApiError extends Error {
   }
 }
 
+/**
+ * Whether this build is pointing at a developer's own machine while running
+ * somewhere else.
+ *
+ * NEXT_PUBLIC_API is inlined at build time, so a deploy that forgets it does
+ * not fail - it silently ships a site that asks every visitor whether their
+ * API is running on port 8000. That reads as a broken product rather than a
+ * missing setting, so it is worth naming exactly.
+ */
+function misconfigured(): boolean {
+  if (typeof window === "undefined") return false;
+  const local = /^(localhost|127\.0\.0\.1|\[::1\])$/;
+  try {
+    return local.test(new URL(BASE).hostname) && !local.test(window.location.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function unreachable(): ApiError {
+  return new ApiError(
+    misconfigured()
+      ? "This site was built without NEXT_PUBLIC_API set, so it is looking " +
+        "for the API on this machine rather than on the server. Set " +
+        "NEXT_PUBLIC_API to the API's public URL and redeploy."
+      : "Cannot reach BusyLab. Is the API running on port 8000?",
+    0
+  );
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`${BASE}${path}`, init);
   } catch {
-    throw new ApiError(
-      "Cannot reach BusyLab. Is the API running on port 8000?",
-      0
-    );
+    throw unreachable();
   }
   if (!response.ok) {
     let detail = response.statusText;

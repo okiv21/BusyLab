@@ -155,12 +155,30 @@ missing one of the five types above.
 
 1. **Add New → Project**, import this repository.
 2. Set **Root Directory** to `web`. Vercel detects Next.js on its own.
+
+   > **This one is not optional, and getting it wrong is not obvious.** The
+   > repository root holds `api/`, which is Python. Vercel's zero-config treats
+   > a top-level `api/` directory as serverless functions, so pointed at the
+   > root it never sees the Next app at all - it builds `api/main.py` as a
+   > Python lambda instead. That fails, because FastAPI with pandas, scipy and
+   > statsmodels is neither a Vercel handler nor within the lambda size limit,
+   > and the site answers every request with **"This Serverless Function has
+   > crashed"**. Nothing in the message points at the root directory.
+   >
+   > If you see that page, this is why. Fix it under **Settings → Build and
+   > Deployment → Root Directory**, then redeploy.
 3. Add one environment variable:
 
    | Variable | Value |
    |---|---|
    | `NEXT_PUBLIC_API` | `https://busylab-api.onrender.com` - no trailing slash |
 
+   > `NEXT_PUBLIC_*` variables are inlined at build time, not read at runtime.
+   > So this must be set **before** the build that ships, and changing it later
+   > needs a redeploy, not a restart. Forgetting it does not fail the build:
+   > the site falls back to `127.0.0.1:8000` and tells every visitor the API is
+   > not running. The frontend now detects that combination and says the
+   > variable is missing instead.
 4. Deploy. Then go back to Render and make sure `BUSYLAB_CORS` matches the
    Vercel URL exactly. A mismatch shows up as *"Cannot reach BusyLab"* in the
    browser while `curl` works perfectly, because `localhost` and `127.0.0.1`
