@@ -111,6 +111,8 @@ the bytes, delete. It catches the two mistakes that authenticate perfectly and
 then fail - using the **anon** key, which cannot write, and a MIME restriction
 missing one of the five types above.
 
+A third check comes in later, once the API is deployed - see the end of step 2.
+
 ## 2. Render (API + worker)
 
 1. **New - Blueprint**, point it at this repository. Render reads
@@ -136,7 +138,6 @@ missing one of the five types above.
    | `DATABASE_URL` | the Supabase pooler URI from step 1 |
    | `SUPABASE_URL` | the Supabase project URL |
    | `SUPABASE_SERVICE_KEY` | the `service_role` key |
-
    | `BUSYLAB_CORS` | your Vercel URL, e.g. `https://busylab.vercel.app` - no trailing slash |
    | `BUSYLAB_SCHEDULER_TOKEN` | a long random string you invent |
 
@@ -144,12 +145,39 @@ missing one of the five types above.
    `BUSYLAB_DIGEST_TO` to actually send the digest. They go on this service
    because the worker runs here.
 
-3. Wait for both to go green, then check:
+3. Wait for it to go green, then check it from outside:
+
+   ```bash
+   python check_api.py https://busylab-api.onrender.com
    ```
-   curl https://busylab-api.onrender.com/health
+
+   Once the frontend is up, pass that too and it will check the browser will
+   be allowed to call the API:
+
+   ```bash
+   python check_api.py https://busylab-api.onrender.com https://busylab.vercel.app
    ```
-   Expect `{"ok":true,...}`. The **first request after inactivity takes 30-60
-   seconds** while the free instance wakes up. That is the free tier, not a bug.
+
+   It waits out a cold start rather than calling a sleeping service dead - the
+   **first request after inactivity takes 30-60 seconds** on a free instance,
+   which is the free tier and not a bug.
+
+   Three things it will tell you that are otherwise genuinely hard to see:
+
+   - **A wrong URL looks like a broken service.** Every name under
+     `onrender.com` resolves whether or not the service exists, so a typo
+     gives you a working host that 404s rather than a DNS failure.
+   - **A refused origin is invisible from both ends.** The browser reports a
+     generic network error - it will not admit the request was blocked - and
+     the server logs an ordinary request, because from its side nothing went
+     wrong. `/health` reports the allowed list so it can be compared directly.
+   - **`storage: local` means uploads are being written to Render's disk**,
+     which is erased on every restart. It deploys clean and works perfectly
+     until the first spin-down, then silently loses everything.
+
+   A service can show **Live** and still be failing every request: the job
+   store is created lazily on the first request, not at startup, so a bad
+   `DATABASE_URL` passes the deploy and the health check is where it surfaces.
 
 ## 3. Vercel (frontend)
 
