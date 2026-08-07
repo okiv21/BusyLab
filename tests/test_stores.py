@@ -370,6 +370,42 @@ def test_a_missing_project_ref_is_named_as_such() -> None:
     assert "pooler" in advice
 
 
+def test_the_poolers_own_tenant_error_is_translated() -> None:
+    """ENOIDENTIFIER is the pooler saying the username has no project ref.
+
+    Confirmed against the real Supabase pooler: a username without a ref gets
+    this rather than an auth failure, and it is the least ambiguous signal
+    available.
+    """
+    from api.pg import _explain
+
+    advice = _explain(
+        "postgresql://postgres:pw@aws-1-eu-west-1.pooler.supabase.com:6543/postgres",
+        "FATAL:  (ENOIDENTIFIER) no tenant identifier provided "
+        "(external_id or sni_hostname required)",
+    )
+    assert "project-ref" in advice
+    assert "ENOIDENTIFIER" not in advice, "the user should not need the code"
+
+
+def test_a_repeated_per_ip_error_is_reduced_to_one_line() -> None:
+    """psycopg tries every resolved address and concatenates the failures."""
+    from api.pg import _explain
+
+    noisy = "\n".join(
+        [
+            "connection failed: FATAL:  something specific went wrong",
+            "Multiple connection attempts failed. All failures were:",
+            "- host: 'a', port: '6543': FATAL:  something specific went wrong",
+            "- host: 'b', port: '6543': FATAL:  something specific went wrong",
+        ]
+    )
+    advice = _explain("postgresql://u.r:p@x.pooler.supabase.com:6543/postgres", noisy)
+
+    assert advice.count("something specific") == 1
+    assert len(advice.splitlines()) == 1
+
+
 def test_a_genuinely_wrong_password_does_not_blame_the_username() -> None:
     from api.pg import _explain
 

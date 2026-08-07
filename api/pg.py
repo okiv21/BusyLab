@@ -479,6 +479,18 @@ def _explain(dsn: str, message: str) -> str:
     pooled = "pooler.supabase.com" in dsn
     user = _username(dsn)
 
+    # The pooler's own words for "your username has no project ref". It is
+    # the most precise signal available and worth matching before anything
+    # else, because it is unambiguous where the auth-failure message is not.
+    if "enoidentifier" in lowered or "no tenant identifier" in lowered:
+        return (
+            "The connection pooler could not tell which project this is. The "
+            "username must be 'postgres.<your-project-ref>' - the pooler reads "
+            f"the project from it, and {user!r} carries no ref. Copy the "
+            "Transaction pooler string from the Connect button rather than "
+            "editing the direct one."
+        )
+
     if "circuitbreaker" in lowered or "too many authentication failures" in lowered:
         return (
             "Supabase has temporarily blocked this address after repeated "
@@ -515,7 +527,22 @@ def _explain(dsn: str, message: str) -> str:
             "and that the project is not paused in the Supabase dashboard."
         )
 
-    return f"Could not connect to the database: {message.strip()}"
+    return f"Could not connect to the database: {_first_reason(message)}"
+
+
+def _first_reason(message: str) -> str:
+    """One line out of a driver error that repeats itself per IP address.
+
+    psycopg tries every address the host resolves to and concatenates all the
+    failures, so a single mistake arrives three or four times over. Only the
+    first distinct reason is worth showing.
+    """
+    for line in message.splitlines():
+        line = line.strip()
+        if "FATAL:" in line:
+            return line.split("FATAL:", 1)[1].strip()
+    first = message.strip().splitlines()[0] if message.strip() else message
+    return first.strip()
 
 
 def _username(dsn: str) -> str:
