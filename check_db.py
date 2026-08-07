@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import getpass
 import sys
-from urllib.parse import urlparse
+import textwrap
+from urllib.parse import quote, urlparse
 
 
 GREEN = "\033[92m"
@@ -111,14 +112,49 @@ def _describe(dsn: str) -> None:
         )
 
 
+def _fill(text: str) -> str:
+    """Wrap a long message to a readable width, indented under the heading."""
+    return textwrap.fill(
+        " ".join(text.split()), width=76, initial_indent="  ", subsequent_indent="  "
+    )
+
+
+def _assemble(template: str) -> str:
+    """Fill the placeholder in Supabase's string with a separately-typed password.
+
+    Two whole classes of failure disappear here. The password never travels
+    through a shell, so PowerShell cannot expand a `$` inside it or strip a
+    backtick; and it is percent-encoded on the way in, so a `#` or `?` cannot
+    truncate it. Both of those fail *silently* - the database just reports the
+    wrong password - which is why they are worth designing out rather than
+    warning about.
+    """
+    print()
+    print("The string still has [YOUR-PASSWORD] in it, which is the easy way.")
+    print(f"{DIM}Type the database password now and it will be inserted and")
+    print(f"encoded correctly. It is not shown, and not saved anywhere.{OFF}")
+    password = getpass.getpass("password > ")
+    if not password:
+        return ""
+    if password != password.strip():
+        # Almost always a copy that caught a trailing space or newline.
+        print(f"{YELLOW}  Trimming whitespace around the password.{OFF}")
+        password = password.strip()
+    # safe="" so that every reserved character is encoded, not just some.
+    return template.replace("[YOUR-PASSWORD]", quote(password, safe="")).replace(
+        "YOUR-PASSWORD", quote(password, safe="")
+    )
+
+
 def main() -> int:
     dsn = sys.argv[1] if len(sys.argv) > 1 else ""
 
     if not dsn:
         print("Paste your Supabase connection string and press Enter.")
         print(
-            f"{DIM}It will not be shown as you type, and it is not saved "
-            f"anywhere.{OFF}"
+            f"{DIM}Leave [YOUR-PASSWORD] in it - you will be asked for the "
+            f"password\nseparately. Nothing is shown as you type, and nothing "
+            f"is saved.{OFF}"
         )
         dsn = getpass.getpass("> ").strip()
 
@@ -126,15 +162,15 @@ def main() -> int:
         print(f"{RED}Nothing entered.{OFF}")
         return 2
 
-    if "[YOUR-PASSWORD]" in dsn or "YOUR-PASSWORD" in dsn:
-        print(
-            f"\n{RED}The placeholder is still in the string.{OFF}\n"
-            "Replace [YOUR-PASSWORD] with your actual database password - the "
-            "one you set when creating the Supabase project, not your Supabase\n"
-            "account password. Reset it under Settings, Database if you have "
-            "lost it."
-        )
-        return 1
+    # Quotes survive a copy out of a terminal command more often than not.
+    dsn = dsn.strip().strip('"').strip("'")
+
+    assembled = "YOUR-PASSWORD" in dsn
+    if assembled:
+        dsn = _assemble(dsn)
+        if not dsn:
+            print(f"{RED}No password entered.{OFF}")
+            return 2
 
     problem = _encoding_problem(dsn)
     if problem:
@@ -157,23 +193,124 @@ def main() -> int:
         _verify_credentials(dsn)
     except DatabaseConfigError as exc:
         print(f"\n{RED}Did not connect.{OFF}\n")
-        print(f"  {exc}\n")
+        message = str(exc)
+        if assembled and "percent-encoded" in message:
+            # This tool encoded the password itself, so that advice is stale
+            # and would send the reader after a problem that cannot exist here.
+            message = message.split("Note that a password")[0]
+            print(_fill(message))
+            print()
+            print(_fill(
+                "The encoding is not the issue - this tool encoded the "
+                "password for you. The password itself is wrong. Reset it "
+                "under Settings, Database, wait a few seconds for the pooler "
+                "to pick up the change, and run this again."
+            ))
+        else:
+            print(_fill(message))
+        print()
         return 1
     except Exception as exc:  # anything the translator did not anticipate
-        print(f"\n{RED}Did not connect.{OFF}\n\n  {exc}\n")
+        print(f"\n{RED}Did not connect.{OFF}\n")
+        print(_fill(str(exc)))
+        print()
         return 1
 
     print(f"\n{GREEN}Connected.{OFF} This string will work on Render.\n")
-    print("Next:")
-    print("  1. Put it in DATABASE_URL on the Render service.")
-    print("  2. Run the full contract against it, which exercises every")
-    print("     query the app makes:")
+
+    # The string was assembled in here, so the caller does not have a copy of
+    # it - and rebuilding it by hand reintroduces exactly the encoding mistake
+    # this tool just removed. Offer the two things they need it for instead.
+    if _ask("Save it to .env, so you can copy it into Render?"):
+        _save_to_env(dsn)
+
+    if _ask("Run the full store contract against it now?", default=True):
+        return _run_contract(dsn)
+
     print()
-    print(f"{DIM}     PowerShell:{OFF}")
-    print('       $env:TEST_DATABASE_URL = "<the same string>"')
-    print("       .venv\\Scripts\\python -m pytest tests/test_stores.py -q")
+    print("When you want the contract - every query the app makes, against")
+    print("this database - run this again and answer yes, or:")
+    print()
+    print(f"{DIM}  PowerShell:{OFF}")
+    print('    $env:TEST_DATABASE_URL = (Select-String DATABASE_URL .env)')
+    print("    .venv\\Scripts\\python -m pytest tests/test_stores.py -q")
     print()
     return 0
+
+
+def _ask(question: str, default: bool = False) -> bool:
+    """A yes/no prompt that behaves when there is nobody to answer it."""
+    suffix = "[Y/n]" if default else "[y/N]"
+    try:
+        reply = input(f"{question} {suffix} ").strip().lower()
+    except EOFError:  # piped or redirected input
+        return default
+    if not reply:
+        return default
+    return reply.startswith("y")
+
+
+def _save_to_env(dsn: str, path: str = ".env") -> None:
+    """Upsert DATABASE_URL in .env, replacing any existing line.
+
+    Writing rather than printing is deliberate: the string carries the
+    password, and printing it puts it in the scrollback and quite possibly in
+    a screenshot. .env is gitignored, so it stays local.
+    """
+    import os
+
+    lines: list[str] = []
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+
+    entry = f"DATABASE_URL={dsn}"
+    for index, line in enumerate(lines):
+        if line.startswith("DATABASE_URL="):
+            if line == entry:
+                print(f"  {DIM}.env already has this string.{OFF}")
+                return
+            lines[index] = entry
+            break
+    else:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.append("# The working connection string. Gitignored - keep it that way.")
+        lines.append(entry)
+
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+    print(f"  {GREEN}Written to {path}{OFF} as DATABASE_URL. Copy the value from")
+    print(f"  there into Render, rather than retyping it.")
+
+
+def _run_contract(dsn: str) -> int:
+    """Run the Postgres contract with the string already verified.
+
+    This is the step that matters. Connecting proves the credentials; the
+    contract proves every query the application makes actually works against
+    this database, which is a different and larger claim.
+    """
+    import os
+    import subprocess
+
+    print(f"\n{DIM}Running tests/test_stores.py against the database. This")
+    print(f"creates and drops its own tables, and takes a minute.{OFF}\n")
+
+    environment = dict(os.environ, TEST_DATABASE_URL=dsn)
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests/test_stores.py", "-q"],
+        env=environment,
+    )
+    if result.returncode == 0:
+        print(f"\n{GREEN}The contract passes.{OFF} The database is ready.\n")
+    else:
+        print(
+            f"\n{RED}The contract failed.{OFF} The credentials are fine - "
+            "something\nabout the schema or a query is not. The output above "
+            "says which.\n"
+        )
+    return result.returncode
 
 
 if __name__ == "__main__":
