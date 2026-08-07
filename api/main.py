@@ -12,6 +12,7 @@ analysing, story, drill-down.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -29,6 +30,8 @@ from busylab.narration.routing import answer_from_findings
 from .handlers import build_handlers
 from .jobs import JobKind, JobStatus, Worker, open_store
 from .storage import StorageError, store_from_env
+
+log = logging.getLogger(__name__)
 
 #: Where uploads land, and where jobs live. Both are abstractions because a
 #: free Render instance has an ephemeral disk: it spins down and comes back
@@ -51,13 +54,52 @@ app = FastAPI(
 #: wrong presents as "cannot reach the API" while curl works perfectly.
 DEFAULT_CORS = "http://localhost:3000,http://127.0.0.1:3000"
 
+
+def allowed_origins(raw: str | None = None) -> list[str]:
+    """Parse BUSYLAB_CORS into origins a browser will actually match.
+
+    An origin is scheme, host and port - nothing else. A trailing slash or a
+    path makes the string unequal to the browser's ``Origin`` header, and the
+    request is refused with no explanation on either side: the browser reports
+    a generic network failure and the server logs a perfectly normal request.
+    Since that value is typed by hand into a dashboard, it is normalised here
+    rather than trusted.
+    """
+    from urllib.parse import urlsplit
+
+    origins: list[str] = []
+    for entry in (raw if raw is not None else os.environ.get("BUSYLAB_CORS", DEFAULT_CORS)).split(","):
+        entry = entry.strip().rstrip("/")
+        if not entry:
+            continue
+        if entry == "*":
+            origins.append(entry)
+            continue
+        parts = urlsplit(entry if "//" in entry else f"https://{entry}")
+        if not parts.hostname:
+            log.warning("ignoring unparseable BUSYLAB_CORS entry %r", entry)
+            continue
+        if parts.path:
+            log.warning(
+                "BUSYLAB_CORS entry %r has a path; using %s://%s instead",
+                entry, parts.scheme, parts.netloc,
+            )
+        origins.append(f"{parts.scheme}://{parts.netloc}")
+
+    # Duplicates are harmless but hide a typo behind a working entry.
+    return list(dict.fromkeys(origins))
+
+
+CORS_ORIGINS = allowed_origins()
+
+# Logged because a CORS mismatch is invisible from both ends at request time.
+# Seeing the list at startup is the only cheap way to compare it with the URL
+# the browser is actually on.
+log.info("CORS allows: %s", ", ".join(CORS_ORIGINS) or "(nothing)")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        origin.strip()
-        for origin in os.environ.get("BUSYLAB_CORS", DEFAULT_CORS).split(",")
-        if origin.strip()
-    ],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -132,6 +174,13 @@ def health(store = Depends(get_store)) -> dict[str, Any]:
         "version": __version__,
         "pending_jobs": store.pending_count(),
         "narration": from_env().name,
+        "storage": FILES.name,
+        # The allowed origins are here because a CORS mismatch is otherwise
+        # invisible: the browser reports a generic network error and the
+        # server logs an ordinary request. Opening /health in a browser and
+        # comparing this list with the address bar settles it in seconds.
+        # These are configuration, not secrets - they are public URLs.
+        "cors_allows": CORS_ORIGINS,
     }
 
 

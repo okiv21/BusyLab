@@ -37,14 +37,19 @@ function misconfigured(): boolean {
 }
 
 function unreachable(): ApiError {
-  return new ApiError(
-    misconfigured()
-      ? "This site was built without NEXT_PUBLIC_API set, so it is looking " +
+  if (misconfigured()) {
+    return new ApiError(
+      "This site was built without NEXT_PUBLIC_API set, so it is looking " +
         "for the API on this machine rather than on the server. Set " +
-        "NEXT_PUBLIC_API to the API's public URL and redeploy."
-      : "Cannot reach BusyLab. Is the API running on port 8000?",
-    0
-  );
+        "NEXT_PUBLIC_API to the API's public URL and redeploy.",
+      0
+    );
+  }
+  // Naming the address is the whole diagnosis. A browser deliberately hides
+  // whether a failed request was refused, timed out, or blocked by CORS, so
+  // the one useful fact left is which address was tried - which immediately
+  // separates a wrong variable from a sleeping server from a CORS mismatch.
+  return new ApiError(`Cannot reach the BusyLab API at ${BASE}.`, 0);
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

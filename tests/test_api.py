@@ -447,3 +447,70 @@ def test_engine_does_not_import_the_web_stack() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "clean" in result.stdout
+
+
+class TestCorsOrigins:
+    """BUSYLAB_CORS is typed by hand into a dashboard, so it is normalised.
+
+    A mismatch here is uniquely hard to diagnose: the browser reports a
+    generic network failure and the server logs an ordinary request, so
+    neither end says the origin was refused.
+    """
+
+    def test_a_trailing_slash_is_dropped(self):
+        from api.main import allowed_origins
+
+        # The browser's Origin header never has one, so a slash here means
+        # every request from the real frontend is refused.
+        assert allowed_origins("https://busylab.vercel.app/") == [
+            "https://busylab.vercel.app"
+        ]
+
+    def test_a_path_is_stripped_to_the_origin(self):
+        from api.main import allowed_origins
+
+        assert allowed_origins("https://busylab.vercel.app/upload") == [
+            "https://busylab.vercel.app"
+        ]
+
+    def test_a_bare_host_is_assumed_to_be_https(self):
+        from api.main import allowed_origins
+
+        assert allowed_origins("busylab.vercel.app") == ["https://busylab.vercel.app"]
+
+    def test_whitespace_and_duplicates_are_removed(self):
+        from api.main import allowed_origins
+
+        # A duplicate is harmless in itself but hides a typo behind a
+        # working entry, so the list is deduped.
+        assert allowed_origins(" https://a.app , https://a.app/ ,https://b.app ") == [
+            "https://a.app",
+            "https://b.app",
+        ]
+
+    def test_the_port_is_part_of_the_origin(self):
+        from api.main import allowed_origins
+
+        assert allowed_origins("http://localhost:3000,http://127.0.0.1:3000") == [
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ]
+
+    def test_a_wildcard_is_passed_through(self):
+        from api.main import allowed_origins
+
+        assert allowed_origins("*") == ["*"]
+
+    def test_empty_means_nothing_is_allowed(self):
+        from api.main import allowed_origins
+
+        # Not silently replaced with the default: an operator who blanked the
+        # variable should get the behaviour they asked for, loudly logged.
+        assert allowed_origins("") == []
+
+    def test_health_reports_what_is_allowed(self, client):
+        # These are public URLs, not secrets, and having them readable is the
+        # only cheap way to compare the server's list with the address bar.
+        body = client.get("/health").json()
+        assert "cors_allows" in body
+        assert isinstance(body["cors_allows"], list)
