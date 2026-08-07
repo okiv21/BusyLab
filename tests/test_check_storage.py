@@ -345,3 +345,36 @@ class TestBucketListing:
             "urllib.request.urlopen", lambda r, timeout=None: _Response(payload)
         )
         assert check_storage._list_buckets("https://x", "k") == ["uploads", "avatars"]
+
+
+class TestListingIsAlwaysReported:
+    """Silence must not read as confirmation."""
+
+    def _run(self, monkeypatch, capsys, names):
+        monkeypatch.setattr(check_storage, "_load_env", lambda path=".env": None)
+        monkeypatch.setenv("SUPABASE_URL", "https://abc.supabase.co")
+        monkeypatch.setenv("SUPABASE_SERVICE_KEY", "sb_secret_x")
+        monkeypatch.setenv("SUPABASE_BUCKET", "uploads")
+        monkeypatch.setattr(check_storage, "_list_buckets", lambda u, k: names)
+        monkeypatch.setattr("api.storage.SupabaseFileStore", lambda **kw: _FakeStore())
+        check_storage.main()
+        return capsys.readouterr().out
+
+    def test_an_unlistable_project_says_so(self, monkeypatch, capsys):
+        out = self._run(monkeypatch, capsys, None)
+        assert "Could not list the buckets" in out
+
+    def test_a_present_bucket_is_confirmed(self, monkeypatch, capsys):
+        out = self._run(monkeypatch, capsys, ["uploads"])
+        assert "exists" in out
+
+    def test_other_buckets_are_shown_alongside(self, monkeypatch, capsys):
+        # Useful context: it confirms the listing really worked, and shows
+        # which project is being talked to.
+        out = self._run(monkeypatch, capsys, ["uploads", "avatars"])
+        assert "avatars" in out
+
+    def test_the_two_outcomes_do_not_look_alike(self, monkeypatch, capsys):
+        unlistable = self._run(monkeypatch, capsys, None)
+        present = self._run(monkeypatch, capsys, ["uploads"])
+        assert unlistable != present

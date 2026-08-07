@@ -145,6 +145,22 @@ def main() -> int:
     # the mistake is almost always the name - a capital letter, a plural, or a
     # bucket made in a different project. Showing the real list ends that.
     names = _list_buckets(url, key)
+    if names is None:
+        # Silence here would read as confirmation. "I could not ask" and "the
+        # bucket is there" must not look the same, or the next failure gets
+        # blamed on the wrong thing.
+        print(f"  {YELLOW}Could not list the buckets in this project.{OFF}")
+        print(_fill(
+            "The key may not have permission, or the project URL may be "
+            "wrong. Continuing anyway - the upload below is the real test."
+        ))
+        print()
+    elif bucket in names:
+        others = [n for n in names if n != bucket]
+        print(f"  {GREEN}bucket {bucket!r} exists{OFF}"
+              + (f"{DIM} (also: {', '.join(others)}){OFF}" if others else ""))
+        print()
+
     if names is not None and bucket not in names:
         print(f"{RED}There is no bucket called {bucket!r}.{OFF}\n")
         if names:
