@@ -346,3 +346,80 @@ def test_the_file_store_factory_defaults_to_local(monkeypatch) -> None:
     from api.storage import store_from_env
 
     assert store_from_env().name == "local"
+
+
+# --------------------------------------------------------------------------
+# Connection failures must name the actual mistake
+# --------------------------------------------------------------------------
+
+
+def test_a_missing_project_ref_is_named_as_such() -> None:
+    """The error Supabase gives sends people to reset a correct password.
+
+    "password authentication failed for user postgres" is what the pooler says
+    when the *username* lacks its project ref. Saying so is the difference
+    between a two-minute fix and an afternoon.
+    """
+    from api.pg import _explain
+
+    advice = _explain(
+        "postgresql://postgres:pw@aws-1-eu-west-1.pooler.supabase.com:6543/postgres",
+        'FATAL:  password authentication failed for user "postgres"',
+    )
+    assert "project-ref" in advice
+    assert "pooler" in advice
+
+
+def test_a_genuinely_wrong_password_does_not_blame_the_username() -> None:
+    from api.pg import _explain
+
+    advice = _explain(
+        "postgresql://postgres.abcdefgh:pw@aws-1-eu-west-1.pooler.supabase.com:6543/postgres",
+        'FATAL:  password authentication failed for user "postgres.abcdefgh"',
+    )
+    assert "project-ref" not in advice
+    assert "percent-encoded" in advice
+
+
+def test_the_circuit_breaker_says_to_wait() -> None:
+    from api.pg import _explain
+
+    advice = _explain(
+        "postgresql://postgres:pw@aws-1-eu-west-1.pooler.supabase.com:6543/postgres",
+        "FATAL:  (ECIRCUITBREAKER) too many authentication failures",
+    )
+    assert "five minutes" in advice
+
+
+def test_the_ipv6_direct_connection_is_explained() -> None:
+    from api.pg import _explain
+
+    advice = _explain(
+        "postgresql://postgres:pw@db.abcdefgh.supabase.co:5432/postgres",
+        "connection failed: Network is unreachable",
+    )
+    assert "IPv6" in advice
+    assert "6543" in advice
+
+
+def test_a_pooler_username_on_the_direct_host_is_caught() -> None:
+    from api.pg import _explain
+
+    advice = _explain(
+        "postgresql://postgres.abcdefgh:pw@db.abcdefgh.supabase.co:5432/postgres",
+        'FATAL:  password authentication failed for user "postgres.abcdefgh"',
+    )
+    assert "direct connection" in advice
+
+
+def test_bad_credentials_fail_once_rather_than_retrying() -> None:
+    """A pool retries forever, which is how one wrong password became a
+    circuit-breaker block and hundreds of identical log lines."""
+    import pytest as _pytest
+
+    from api.pg import DatabaseConfigError, PostgresJobStore
+
+    with _pytest.raises(DatabaseConfigError):
+        PostgresJobStore(
+            "postgresql://nobody:nothing@127.0.0.1:1/nowhere"
+        )

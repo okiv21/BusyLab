@@ -318,7 +318,9 @@ true:
 | `Network is unreachable` | You used the **direct** connection (`db.xxx.supabase.co:5432`). It is IPv6-only and Render is not. Use the transaction pooler. |
 | `prepared statement "_pg3_0" already exists` | Prepared statements reaching the pooler. The code disables them, so this means an older build is deployed - redeploy. |
 | `too many connections` | Lower `BUSYLAB_PG_POOL`, or you are running more services than a free Postgres allows. |
-| `password authentication failed` | The database password, not your Supabase account password. Reset it under **Settings - Database**. |
+| `password authentication failed for user "postgres"` | The **username** is wrong, not the password. On the pooler it must be `postgres.<your-project-ref>`; plain `postgres` belongs to the direct connection. This is the single most common failure, and the error points at the wrong thing. |
+| `password authentication failed for user "postgres.abc..."` | Now it really is the password. Reset it under **Settings - Database**, or percent-encode any `@ : / ?` it contains. |
+| `(ECIRCUITBREAKER) too many authentication failures` | Supabase has blocked the address after repeated failed logins. Fix the credentials, then **wait about five minutes** - it will reject a correct password until the block clears. |
 | Data vanishes after a restart | `DATABASE_URL` never reached the service, so it silently fell back to SQLite on the disposable disk. Check the variable is set on **both** the API and the worker. |
 
 To check the connection string before deploying anything, run it against the

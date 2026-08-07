@@ -103,6 +103,14 @@ class PostgresJobStore:
         from psycopg_pool import ConnectionPool
 
         self.dsn = dsn
+        # Check the credentials once, directly, before opening a pool.
+        #
+        # A pool treats every failure as transient and keeps retrying, which is
+        # right for a dropped network and badly wrong for a rejected password:
+        # it hammers the provider until Supabase's circuit breaker blocks the
+        # address, and buries one real error under hundreds of identical
+        # retries. One connection first turns that into a single readable line.
+        _verify_credentials(dsn)
         # A small pool: a free Supabase project has a modest connection cap and
         # the API plus one worker do not need many.
         #
@@ -440,6 +448,100 @@ class PostgresJobStore:
                 (JobStatus.PENDING.value,),
             ).fetchone()
         return int(row[0])
+
+
+class DatabaseConfigError(RuntimeError):
+    """The connection string is wrong in a way retrying will not fix."""
+
+
+def _verify_credentials(dsn: str) -> None:
+    """Open one connection, and translate the failure into something readable.
+
+    Every message below names the specific mistake, because the raw errors do
+    not. "password authentication failed for user postgres" is what Supabase
+    says when the *username* is missing its project ref, which sends people off
+    resetting a password that was never wrong.
+    """
+    import psycopg
+
+    try:
+        with psycopg.connect(dsn, connect_timeout=15) as conn:
+            conn.execute("SELECT 1")
+        return
+    except psycopg.OperationalError as exc:
+        message = str(exc)
+        raise DatabaseConfigError(_explain(dsn, message)) from exc
+
+
+def _explain(dsn: str, message: str) -> str:
+    """Turn a driver error into the thing that is actually wrong."""
+    lowered = message.lower()
+    pooled = "pooler.supabase.com" in dsn
+    user = _username(dsn)
+
+    if "circuitbreaker" in lowered or "too many authentication failures" in lowered:
+        return (
+            "Supabase has temporarily blocked this address after repeated "
+            "failed logins. Wait about five minutes, then retry with the "
+            "corrected credentials. "
+            + _username_hint(pooled, user)
+        )
+
+    if "password authentication failed" in lowered:
+        hint = _username_hint(pooled, user)
+        return (
+            f"The database rejected the credentials for user {user!r}. {hint}"
+            " Otherwise the password is wrong, or it contains a character "
+            "such as @ : / or ? that must be percent-encoded inside a URL."
+        )
+
+    if "does not exist" in lowered and "database" in lowered:
+        return (
+            "That database name does not exist. On Supabase it is 'postgres', "
+            "which is the last path segment of the connection string."
+        )
+
+    if "network is unreachable" in lowered or "could not translate host" in lowered:
+        return (
+            "Could not reach the database host. If this is the direct "
+            "connection (db.<ref>.supabase.co), it is IPv6-only and most hosts "
+            "including Render cannot use it - take the transaction pooler "
+            "string instead, on port 6543."
+        )
+
+    if "timeout" in lowered or "timed out" in lowered:
+        return (
+            "The database did not answer in time. Check the host and port, "
+            "and that the project is not paused in the Supabase dashboard."
+        )
+
+    return f"Could not connect to the database: {message.strip()}"
+
+
+def _username(dsn: str) -> str:
+    """The username in a connection string, without parsing the password."""
+    from urllib.parse import urlparse
+
+    try:
+        return urlparse(dsn).username or "?"
+    except ValueError:
+        return "?"
+
+
+def _username_hint(pooled: bool, user: str) -> str:
+    if pooled and "." not in user:
+        return (
+            f"The host is the connection pooler, so the username must be "
+            f"'postgres.<your-project-ref>' rather than plain '{user}' - the "
+            "pooler identifies the project from it. Copy the transaction "
+            "pooler string from Connect rather than editing the direct one."
+        )
+    if not pooled and "." in user:
+        return (
+            "The username carries a project ref, which belongs to the pooler, "
+            "but the host is the direct connection. Use one or the other."
+        )
+    return ""
 
 
 def _row_to_job(row: tuple) -> Job:
