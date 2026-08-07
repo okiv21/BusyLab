@@ -40,7 +40,14 @@ WAKE_SECONDS = 90
 
 def _fill(text: str) -> str:
     return textwrap.fill(
-        " ".join(text.split()), width=76, initial_indent="  ", subsequent_indent="  "
+        " ".join(text.split()),
+        width=76,
+        initial_indent="  ",
+        subsequent_indent="  ",
+        # Hyphenated terms are usually the searchable part of the advice -
+        # "case-sensitive", "service_role", "percent-encoded" - and splitting
+        # them across a line break makes them unreadable and ungreppable.
+        break_on_hyphens=False,
     )
 
 

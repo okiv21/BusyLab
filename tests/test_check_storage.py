@@ -169,6 +169,9 @@ class TestMain:
         monkeypatch.setenv("SUPABASE_URL", "https://abc.supabase.co")
         monkeypatch.setenv("SUPABASE_SERVICE_KEY", "sb_secret_x")
         monkeypatch.setenv("SUPABASE_BUCKET", "uploads")
+        # Stubbed, or these reach out to a real host and the suite becomes
+        # slow and dependent on the network being up.
+        monkeypatch.setattr(check_storage, "_list_buckets", lambda u, k: ["uploads"])
 
     def _run(self, monkeypatch, store):
         monkeypatch.setattr(
@@ -276,3 +279,69 @@ class TestStoreWiring:
         with pytest.raises(StorageError) as caught:
             store.put("a.csv", b"x")
         assert "SUPABASE_URL" in str(caught.value)
+
+
+class TestBucketListing:
+    """"Bucket not found" is least useful exactly when you know you made one."""
+
+    def _run(self, monkeypatch, capsys, names, bucket="uploads"):
+        monkeypatch.setattr(check_storage, "_load_env", lambda path=".env": None)
+        monkeypatch.setenv("SUPABASE_URL", "https://abc.supabase.co")
+        monkeypatch.setenv("SUPABASE_SERVICE_KEY", "sb_secret_x")
+        monkeypatch.setenv("SUPABASE_BUCKET", bucket)
+        monkeypatch.setattr(check_storage, "_list_buckets", lambda u, k: names)
+        monkeypatch.setattr("api.storage.SupabaseFileStore", lambda **kw: _FakeStore())
+        return check_storage.main(), capsys.readouterr().out
+
+    def test_the_real_names_are_shown(self, monkeypatch, capsys):
+        code, out = self._run(monkeypatch, capsys, ["Uploads", "avatars"])
+        assert code == 1
+        # The near-miss is the whole point: it is almost always the name.
+        assert "Uploads" in out and "avatars" in out
+        # Intact, not split across a line break: hyphenated terms are the
+        # searchable part of the advice, which is why _fill does not break
+        # on hyphens.
+        assert "case-sensitive" in out
+
+    def test_an_empty_project_points_at_the_wrong_project(self, monkeypatch, capsys):
+        code, out = self._run(monkeypatch, capsys, [])
+        assert code == 1
+        assert "different Supabase project" in out
+
+    def test_a_matching_bucket_proceeds(self, monkeypatch, capsys):
+        code, out = self._run(monkeypatch, capsys, ["uploads"])
+        assert code == 0
+        assert "Storage works" in out
+
+    def test_an_unlistable_project_is_not_called_empty(self, monkeypatch, capsys):
+        # None means "could not ask". Reporting that as "you have no buckets"
+        # would send someone off to recreate what already exists.
+        code, out = self._run(monkeypatch, capsys, None)
+        assert code == 0
+        assert "no buckets at all" not in out
+
+    def test_listing_failure_returns_none_not_empty(self, monkeypatch):
+        import urllib.error
+
+        def boom(request, timeout=None):
+            raise urllib.error.URLError("no route")
+
+        monkeypatch.setattr("urllib.request.urlopen", boom)
+        assert check_storage._list_buckets("https://x", "k") is None
+
+    def test_a_listing_is_parsed_into_names(self, monkeypatch):
+        import io
+        import json
+
+        class _Response(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        payload = json.dumps([{"name": "uploads"}, {"name": "avatars"}]).encode()
+        monkeypatch.setattr(
+            "urllib.request.urlopen", lambda r, timeout=None: _Response(payload)
+        )
+        assert check_storage._list_buckets("https://x", "k") == ["uploads", "avatars"]

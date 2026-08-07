@@ -40,7 +40,14 @@ SAMPLE = b"date,revenue\n2026-01-01,100\n"
 
 def _fill(text: str) -> str:
     return textwrap.fill(
-        " ".join(text.split()), width=76, initial_indent="  ", subsequent_indent="  "
+        " ".join(text.split()),
+        width=76,
+        initial_indent="  ",
+        subsequent_indent="  ",
+        # Hyphenated terms are usually the searchable part of the advice -
+        # "case-sensitive", "service_role", "percent-encoded" - and splitting
+        # them across a line break makes them unreadable and ungreppable.
+        break_on_hyphens=False,
     )
 
 
@@ -133,6 +140,32 @@ def main() -> int:
 
     from api.storage import StorageError, SupabaseFileStore
 
+    # Ask the project what buckets it has before assuming one. "Bucket not
+    # found" is unhelpful precisely when you are sure you created it, because
+    # the mistake is almost always the name - a capital letter, a plural, or a
+    # bucket made in a different project. Showing the real list ends that.
+    names = _list_buckets(url, key)
+    if names is not None and bucket not in names:
+        print(f"{RED}There is no bucket called {bucket!r}.{OFF}\n")
+        if names:
+            print("  This project has:")
+            for name in names:
+                print(f"    - {name}")
+            print()
+            print(_fill(
+                f"If one of those is the one you meant, set SUPABASE_BUCKET to "
+                f"it - on Render, and in .env so this check tests the same one. "
+                f"Names are case-sensitive."
+            ))
+        else:
+            print(_fill(
+                "This project has no buckets at all. If you created one, it "
+                "was in a different Supabase project - check the project "
+                "selector at the top of the dashboard against SUPABASE_URL."
+            ))
+        print()
+        return 1
+
     store = SupabaseFileStore(url=url, key=key, bucket=bucket)
 
     # Round-trip, in the order the application does it. Each step is reported
@@ -188,6 +221,31 @@ def main() -> int:
     print(f"  SUPABASE_SERVICE_KEY   {DIM}(the key you just used){OFF}")
     print()
     return 0
+
+
+def _list_buckets(url: str, key: str) -> list[str] | None:
+    """Bucket names in this project, or None if they could not be listed.
+
+    None is deliberately different from an empty list: "I could not ask" must
+    not be reported as "you have no buckets", which would send someone off to
+    recreate something that already exists.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    request = urllib.request.Request(
+        f"{url}/storage/v1/bucket",
+        headers={"Authorization": f"Bearer {key}", "apikey": key},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            payload = json.loads(response.read())
+    except (urllib.error.URLError, TimeoutError, ValueError):
+        return None
+    if not isinstance(payload, list):
+        return None
+    return [b.get("name", "") for b in payload if isinstance(b, dict)]
 
 
 def _cleanup(store) -> None:
