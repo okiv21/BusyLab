@@ -79,6 +79,38 @@ your laptop restarts.
 Tables are created automatically on first start, so there is no migration to
 run.
 
+### Check both before going further
+
+Neither the database nor the bucket can be exercised locally, so without this
+step the first thing to find a wrong key or a missing bucket is a real upload,
+several minutes after a deploy, reported as a bare `400`. Two scripts close
+that loop in seconds:
+
+```bash
+python check_db.py
+```
+
+Paste the pooler URI **with `[YOUR-PASSWORD]` still in it** and type the
+password at the second prompt. It is inserted and percent-encoded for you,
+which matters more than it sounds: a `#`, `?` or `/` in a password is not
+rejected by a URL parser, it silently truncates the password, and the database
+then reports authentication failure for a password that is correct. Typing it
+separately also keeps it out of your shell history and away from PowerShell,
+which expands `$` and eats backticks.
+
+On success it offers to save the working string to `.env` (gitignored) and to
+run the full store contract - every query the application makes, against the
+real database.
+
+```bash
+python check_storage.py
+```
+
+Round-trips an actual spreadsheet through the bucket: upload, download, compare
+the bytes, delete. It catches the two mistakes that authenticate perfectly and
+then fail - using the **anon** key, which cannot write, and a MIME restriction
+missing one of the five types above.
+
 ## 2. Render (API + worker)
 
 1. **New - Blueprint**, point it at this repository. Render reads

@@ -55,6 +55,49 @@ def content_type_for(key: str) -> str:
     return CONTENT_TYPES.get(Path(key).suffix.lower(), "application/octet-stream")
 
 
+def _explain_http(exc: "urllib.error.HTTPError", bucket: str, key: str) -> str:
+    """Turn a storage HTTP error into the thing that is actually wrong.
+
+    Supabase puts a usable message in the response body and the bare status
+    line throws it away, so a misconfigured bucket arrives as "400 Bad Request"
+    with nothing to act on. Every one of these is a setup mistake made once,
+    during deployment, by someone who cannot see the bucket settings from here.
+    """
+    try:
+        body = exc.read().decode("utf-8", "replace").strip()
+    except Exception:  # the body is a nicety, never worth masking the status
+        body = ""
+
+    lowered = body.lower()
+    detail = f" Supabase said: {body}" if body else ""
+
+    if exc.code in (401, 403):
+        return (
+            f"{exc.code} {exc.reason}. The key was rejected. SUPABASE_SERVICE_KEY "
+            f"must be the service_role key from Settings, API - not the anon "
+            f"key, which cannot write, and not the database password.{detail}"
+        )
+    if exc.code == 404 or "not found" in lowered:
+        if "bucket" in lowered:
+            return (
+                f"{exc.code} {exc.reason}. There is no bucket called {bucket!r}. "
+                f"Create it under Storage, or correct SUPABASE_BUCKET.{detail}"
+            )
+        return f"{exc.code} {exc.reason}. No object at {key!r}.{detail}"
+    if exc.code == 413 or "too large" in lowered or "maximum size" in lowered:
+        return (
+            f"{exc.code} {exc.reason}. The file is larger than the bucket's "
+            f"size limit. Raise it under Storage, bucket settings.{detail}"
+        )
+    if "mime" in lowered or exc.code == 415:
+        return (
+            f"{exc.code} {exc.reason}. The bucket restricts MIME types and "
+            f"{content_type_for(key)!r} is not on the list. Add it, or turn the "
+            f"restriction off.{detail}"
+        )
+    return f"{exc.code} {exc.reason}.{detail}"
+
+
 @runtime_checkable
 class FileStore(Protocol):
     """Somewhere to put an uploaded spreadsheet."""
@@ -149,10 +192,15 @@ class SupabaseFileStore:
                 return response.read()
         except urllib.error.HTTPError as exc:
             raise StorageError(
-                f"Supabase Storage {method} {key!r} failed: {exc.code} {exc.reason}"
+                f"Supabase Storage {method} {key!r} failed: "
+                f"{_explain_http(exc, self.bucket, key)}"
             ) from exc
         except (urllib.error.URLError, TimeoutError) as exc:
-            raise StorageError(f"Supabase Storage unreachable: {exc}") from exc
+            raise StorageError(
+                f"Supabase Storage unreachable: {exc}. Check SUPABASE_URL - it "
+                f"should be the project URL, https://<ref>.supabase.co, with no "
+                f"path after it."
+            ) from exc
 
     def put(self, key: str, data: bytes) -> str:
         self._request("POST", key, data)
