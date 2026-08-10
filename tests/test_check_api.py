@@ -181,3 +181,40 @@ class TestNoAnswer:
         assert len(attempts) > 1, "gave up after a single try"
         assert "Logs tab" in out
         assert "can show Live and still" in out
+
+
+class TestBucketReporting:
+    """The bucket name is the one storage setting that cannot be seen from outside.
+
+    A wrong bucket name behaves exactly like a correct one until the first
+    upload, and checking it directly needs the service key. Reporting it on
+    /health makes it verifiable without credentials.
+    """
+
+    def _run(self, monkeypatch, capsys, health):
+        monkeypatch.setattr(check_api, "_resolves", lambda host: True)
+        monkeypatch.setattr(check_api, "_get", lambda url, timeout: (200, json.dumps(health)))
+        monkeypatch.setattr(check_api.sys, "argv", ["check_api.py", "https://a.onrender.com"])
+        check_api.main()
+        return capsys.readouterr().out
+
+    def test_the_bucket_is_shown(self, monkeypatch, capsys):
+        out = self._run(monkeypatch, capsys, {
+            "ok": True, "version": "0.1.0", "storage": "supabase",
+            "bucket": "Busylab", "cors_allows": ["https://x.vercel.app"],
+        })
+        assert "Busylab" in out
+
+    def test_an_older_build_without_the_field_still_works(self, monkeypatch, capsys):
+        out = self._run(monkeypatch, capsys, {
+            "ok": True, "version": "0.1.0", "storage": "supabase",
+            "cors_allows": ["https://x.vercel.app"],
+        })
+        assert "The API is up" in out
+
+    def test_local_storage_has_no_bucket_to_report(self, monkeypatch, capsys):
+        out = self._run(monkeypatch, capsys, {
+            "ok": True, "version": "0.1.0", "storage": "local",
+            "bucket": None, "cors_allows": [],
+        })
+        assert "will be lost" in out

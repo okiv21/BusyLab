@@ -176,6 +176,11 @@ def health(store = Depends(get_store)) -> dict[str, Any]:
         "pending_jobs": store.pending_count(),
         "narration": from_env().name,
         "storage": FILES.name,
+        # Which bucket, not just which kind of store. A wrong bucket name is
+        # the one storage misconfiguration that looks identical to a working
+        # setup until the first upload, and it cannot be checked from outside
+        # without the service key. The name is configuration, not a secret.
+        "bucket": getattr(FILES, "bucket", None),
         # The allowed origins are here because a CORS mismatch is otherwise
         # invisible: the browser reports a generic network error and the
         # server logs an ordinary request. Opening /health in a browser and

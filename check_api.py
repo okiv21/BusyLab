@@ -198,6 +198,8 @@ def main() -> int:
     print(f"\n{GREEN}The API is up.{OFF}\n")
     print(f"  version   {health.get('version', '?')}")
     print(f"  storage   {_storage_note(health.get('storage'))}")
+    if health.get("bucket"):
+        print(f"  bucket    {health['bucket']}")
     print(f"  narration {health.get('narration', '?')}")
     print(f"  queued    {health.get('pending_jobs', '?')}")
 
