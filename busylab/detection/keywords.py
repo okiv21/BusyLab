@@ -57,6 +57,11 @@ _TERMS: dict[Role, tuple[tuple[float, tuple[str, ...]], ...]] = {
             ("day", "period", "month", "week", "datetime", "time stamp", "sold on"),
         ),
         (ABBREV, ("dt", "dte", "trans date", "ord date", "date time")),
+        # Ecommerce exports timestamp events as "<verb>ed at".
+        (STRONG, ("paid at", "fulfilled at", "shipped at", "cancelled at",
+                  "closed at", "updated at", "ordered at", "processed at",
+                  "doc date", "value date", "week ending", "month ending",
+                  "invoice dt", "sale dt", "order dt", "datum")),
         # Misspellings seen in the wild.
         (ABBREV, ("dat", "datte", "orderdate", "salesdate")),
         (WEAK, ("time", "when", "entry date", "record date")),
@@ -92,6 +97,9 @@ _TERMS: dict[Role, tuple[tuple[float, tuple[str, ...]], ...]] = {
             ),
         ),
         (ABBREV, ("prod", "itm", "desc", "prod name", "prod desc", "item desc")),
+        (STRONG, ("model", "model name", "part no", "part number", "variant",
+                  "variant title", "lineitem name", "line item", "style",
+                  "style code", "barcode", "upc", "ean", "isbn")),
         (ABBREV, ("produkt", "prduct", "itemname")),
         (WEAK, ("name", "title", "description", "details", "what")),
     ),
@@ -136,6 +144,8 @@ _TERMS: dict[Role, tuple[tuple[float, tuple[str, ...]], ...]] = {
             ),
         ),
         (ABBREV, ("rev", "amt paid", "ttl", "tot amt", "sls", "revnue", "revenu")),
+        (STRONG, ("extended price", "extended amount", "line amount",
+                  "net amount", "value sold", "amount sold", "sales total")),
         # Deliberately weak: these words appear in cost, discount and tax
         # columns just as often as they appear in revenue columns.
         (WEAK, ("amount", "amt", "total", "value", "naira", "ngn", "money", "sum")),
@@ -155,7 +165,9 @@ _TERMS: dict[Role, tuple[tuple[float, tuple[str, ...]], ...]] = {
             ),
         ),
         (STRONG, ("units", "pieces", "pcs", "count", "volume", "unit sold")),
-        (ABBREV, ("qty", "qnty", "qnt", "nos", "no", "quantiy", "qauntity", "quatity")),
+        (ABBREV, ("qty", "qnty", "qnt", "nos", "quantiy", "qauntity", "quatity")),
+        # "no of items" is a count; a bare "no" is an identifier suffix.
+        (STRONG, ("no of", "number of", "no of items", "number of items")),
         (WEAK, ("unit", "number", "num", "each")),
     ),
     Role.UNIT_PRICE: (
@@ -174,7 +186,8 @@ _TERMS: dict[Role, tuple[tuple[float, tuple[str, ...]], ...]] = {
             ),
         ),
         (STRONG, ("price", "rate", "sp", "unit selling price")),
-        (ABBREV, ("ppu", "u price", "prc", "pric", "unitprice")),
+        (ABBREV, ("ppu", "u price", "prc", "pric", "unitprice", "mrp")),
+        (STRONG, ("lineitem price", "item price", "price per pc")),
         (WEAK, ("per unit", "each price")),
     ),
     Role.COST: (
@@ -219,6 +232,8 @@ _TERMS: dict[Role, tuple[tuple[float, tuple[str, ...]], ...]] = {
         ),
         (STRONG, ("buyer", "account", "member", "patron", "customer ref")),
         (ABBREV, ("cust", "custid", "cust name", "cid", "custmer", "custome")),
+        (STRONG, ("billing name", "billing customer", "shipping name",
+                  "member no", "member number", "account no")),
         # Nigerian SMEs very often identify a repeat customer by phone number.
         (WEAK, ("phone", "phone number", "mobile", "contact", "email")),
     ),
@@ -243,6 +258,8 @@ _TERMS: dict[Role, tuple[tuple[float, tuple[str, ...]], ...]] = {
         ),
         (STRONG, ("order", "invoice", "receipt", "transaction", "bill", "waybill")),
         (ABBREV, ("ord no", "inv no", "inv", "txn", "trx", "ref no", "order ref")),
+        (STRONG, ("docket no", "docket number", "waybill", "waybill no",
+                  "slip no", "voucher no", "trans no", "tran id")),
         (WEAK, ("ref", "reference", "id", "no", "number")),
     ),
     Role.CHANNEL: (
@@ -261,7 +278,10 @@ _TERMS: dict[Role, tuple[tuple[float, tuple[str, ...]], ...]] = {
         ),
         (STRONG, ("platform", "medium", "outlet type", "sale type", "order type")),
         (ABBREV, ("src", "chan", "chnl", "via", "channe")),
-        (WEAK, ("source", "type", "mode", "method", "how")),
+        (WEAK, ("source", "method", "how")),
+        # Only channel-shaped when something qualifies them.
+        (STRONG, ("order type", "delivery type", "sale type",
+                  "order mode", "delivery mode")),
     ),
     Role.REGION: (
         (
@@ -281,6 +301,9 @@ _TERMS: dict[Role, tuple[tuple[float, tuple[str, ...]], ...]] = {
             ),
         ),
         (STRONG, ("branch", "store", "outlet", "shop", "site", "area", "town")),
+        (STRONG, ("postcode", "post code", "zip", "zip code", "postal code",
+                  "lga", "local government", "shipping city", "billing city",
+                  "shipping state", "county", "district")),
         (ABBREV, ("loc", "regn", "citi", "brnch")),
         (WEAK, ("address", "place", "where", "market")),
     ),
@@ -319,7 +342,9 @@ _TERMS: dict[Role, tuple[tuple[float, tuple[str, ...]], ...]] = {
         ),
         (STRONG, ("cat", "group", "class", "family", "dept", "brand", "range")),
         (ABBREV, ("prod cat", "item cat", "categ", "catgory")),
-        (WEAK, ("segment", "kind", "sort")),
+        (STRONG, ("sub category", "subcategory", "sub cat", "main category",
+                  "product line", "line", "collection")),
+        (WEAK, ("segment", "kind", "sort", "type", "grouping", "tag")),
     ),
     Role.PAYMENT_METHOD: (
         (
@@ -334,7 +359,8 @@ _TERMS: dict[Role, tuple[tuple[float, tuple[str, ...]], ...]] = {
                 "payment channel",
             ),
         ),
-        (STRONG, ("payment", "tender", "paid via", "paid with", "pay mode")),
+        (STRONG, ("payment", "tender", "paid via", "paid with", "pay mode",
+                  "paid by", "paid using", "payment mode", "pay method")),
         (ABBREV, ("pay type", "pmt method", "pay mthd", "paymnt")),
         (WEAK, ("pay", "settlement")),
     ),
@@ -343,9 +369,24 @@ _TERMS: dict[Role, tuple[tuple[float, tuple[str, ...]], ...]] = {
 
 # Match quality multipliers, applied to a term's weight.
 _EXACT = 1.0  # the whole column name is exactly this term
+_PHRASE_TAIL = 0.95  # consecutive words, and they end the name
 _PHRASE = 0.85  # the term appears as consecutive words in the name
 _BAG = 0.7  # all the term's words are present, but scattered
+_PHRASE_HEAD = 0.7  # consecutive words, but only at the start of a longer name
 _INFIX = 0.5  # a single-word term is buried inside a longer word
+
+# Why the head and tail multipliers differ, since it looks like a fudge:
+#
+# English compound nouns are head-final. "Invoice date" is a kind of date, not
+# a kind of invoice; "sale dt", "paid at" and "order number" work the same way.
+# So the last word of a column name is far better evidence of what the column
+# holds than the first, and without that asymmetry the qualifier wins on raw
+# weight - "invoice" outscored "dt" and a perfectly ordinary date column was
+# read as an order id.
+#
+# It also protects the case the spec cares about most (3.2): "discount_amount"
+# keeps its DISCOUNT reading, because "discount" leads a two-word name and the
+# generic "amount" that follows is deliberately weak.
 
 
 @dataclass(frozen=True)
@@ -386,10 +427,23 @@ def normalize(name: object) -> str:
 
 def _contiguous(haystack: list[str], needle: list[str]) -> bool:
     """True if ``needle`` appears as a consecutive run inside ``haystack``."""
+    return _run_position(haystack, needle) is not None
+
+
+def _run_position(haystack: list[str], needle: list[str]) -> int | None:
+    """Index of the first consecutive run of ``needle``, or None.
+
+    The position matters, not just the presence: a term ending the name is
+    describing what the column is, and a term starting it is usually only
+    qualifying whatever comes after.
+    """
     n = len(needle)
     if n == 0 or n > len(haystack):
-        return False
-    return any(haystack[i : i + n] == needle for i in range(len(haystack) - n + 1))
+        return None
+    for i in range(len(haystack) - n + 1):
+        if haystack[i : i + n] == needle:
+            return i
+    return None
 
 
 def _score_term(name: str, tokens: list[str], term: str) -> tuple[float, str] | None:
@@ -399,8 +453,20 @@ def _score_term(name: str, tokens: list[str], term: str) -> tuple[float, str] | 
         return None
     if name == term:
         return _EXACT, "exact"
-    if _contiguous(tokens, term_tokens):
+
+    position = _run_position(tokens, term_tokens)
+    if position is not None:
+        end = position + len(term_tokens)
+        # "of" inverts the compound: in "date of order" the head is "date",
+        # not "order". So the head region ends at "of" when one is present,
+        # rather than at the end of the name.
+        head_end = tokens.index("of") if "of" in tokens else len(tokens)
+        if end == head_end:
+            return _PHRASE_TAIL, "phrase_tail"
+        if position == 0:
+            return _PHRASE_HEAD, "phrase_head"
         return _PHRASE, "phrase"
+
     if len(term_tokens) > 1 and all(t in tokens for t in term_tokens):
         return _BAG, "bag"
     if len(term_tokens) == 1 and len(term) >= 3:
@@ -409,6 +475,57 @@ def _score_term(name: str, tokens: list[str], term: str) -> tuple[float, str] | 
         if any(term in tok and tok != term for tok in tokens):
             return _INFIX, "infix"
     return None
+
+
+#: Money columns that are none of the thirteen roles.
+#:
+#: Tax, shipping and service charges are all amounts sitting next to a sale, so
+#: the deliberately-weak generic terms ("amount", "value", "total") pick them up
+#: and the greedy assignment then has to put them somewhere. In practice that
+#: meant ``tax_amount`` being proposed as a discount and ``shipping_fee`` as a
+#: cost - both wrong, both plausible enough to be waved through, and both
+#: corrupting margin if they were.
+#:
+#: Proposing nothing is the right answer. These are not roles the engine has,
+#: so the column becomes unknown and is left out, rather than becoming a
+#: confirmation prompt offering only wrong options.
+NON_MEASURE_HEADS: frozenset[str] = frozenset(
+    {
+        "tax", "vat", "gst", "duty", "levy", "withholding", "wht",
+        "shipping", "freight", "delivery", "postage", "carriage", "handling",
+        "service", "surcharge", "gratuity", "tip", "tips",
+        "commission", "fee", "fees", "charge", "charges",
+        "refund", "refunds", "credit", "chargeback", "adjustment",
+        "balance", "outstanding", "deposit", "change", "rounding",
+    }
+)
+
+
+#: The roles a non-measure head suppresses. Only the money ones: those are the
+#: readings that content cannot distinguish and that corrupt arithmetic when
+#: wrong. A tax column is not a cost, but "Shipping City" is still a region.
+MONETARY_ROLES: frozenset[Role] = frozenset(
+    {Role.REVENUE, Role.COST, Role.DISCOUNT, Role.UNIT_PRICE}
+)
+
+
+def _is_non_measure(tokens: list[str]) -> bool:
+    """True when the name's head word puts it outside the role vocabulary.
+
+    Head word only. "tax amount" is a tax; "amount of tax" is too. But
+    "total sales tax exclusive revenue" is contrived, and a name whose *first*
+    word is one of these is reliably not a sales measure.
+    """
+    if not tokens:
+        return False
+    if tokens[0] in NON_MEASURE_HEADS:
+        return True
+    # "amount of tax", "cost of shipping" - the "of" inversion again.
+    if "of" in tokens:
+        after = tokens[tokens.index("of") + 1 :]
+        if after and after[0] in NON_MEASURE_HEADS:
+            return True
+    return False
 
 
 def match_name(name: object) -> list[KeywordMatch]:
@@ -437,6 +554,13 @@ def match_name(name: object) -> list[KeywordMatch]:
                     best[role] = KeywordMatch(
                         role=role, score=score, term=term, quality=quality
                     )
+
+    if _is_non_measure(tokens):
+        # Suppress only the monetary readings, not every role. "Shipping City"
+        # is a location that happens to start with a non-measure word, and
+        # dropping the whole name would lose a perfectly good region column.
+        for role in MONETARY_ROLES:
+            best.pop(role, None)
 
     return sorted(best.values(), key=lambda m: (-m.score, m.role.value))
 

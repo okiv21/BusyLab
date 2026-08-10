@@ -190,7 +190,28 @@ REQUIRED_OR_VALUABLE: frozenset[Role] = frozenset(
 #: keyword support the column is offered as a generic grouping instead, which
 #: is the honest answer and the middle path of spec 3.3.
 NAME_REQUIRED_ROLES: frozenset[Role] = frozenset(
-    {Role.CHANNEL, Role.REGION, Role.CATEGORY, Role.PAYMENT_METHOD}
+    {
+        Role.CHANNEL,
+        Role.REGION,
+        Role.CATEGORY,
+        Role.PAYMENT_METHOD,
+        # Cost and discount belong here for a different reason than the
+        # categoricals above, and a sharper one.
+        #
+        # Content cannot tell one money column from another. Tax, shipping, a
+        # service charge, a commission and a genuine cost of goods all profile
+        # identically: positive, continuous, two decimal places, smaller than
+        # revenue. So with content alone, any stray amount column could be
+        # claimed as cost - and cost feeds margin directly, meaning a shipping
+        # fee read as cost of goods silently changes every profit number in
+        # the story rather than producing a visible error.
+        #
+        # Quantity, unit price and revenue are deliberately left out: those
+        # three are corroborated arithmetically against each other, which is
+        # real evidence independent of the name. Nothing corroborates cost.
+        Role.COST,
+        Role.DISCOUNT,
+    }
 )
 
 
