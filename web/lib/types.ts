@@ -44,6 +44,10 @@ export interface Finding {
   chart_data: Record<string, any>;
   related: string[];
   narrated_by?: "model" | "engine";
+  /** What the summary means, in plain words and without numbers. */
+  meaning?: string;
+  /** Definitions for the jargon this particular summary could not avoid. */
+  glossary?: Record<string, string>;
 }
 
 export interface Chip {
@@ -148,6 +152,10 @@ export interface Answer {
   finding?: Finding;
   answer?: string;
   suggestions?: Chip[];
+  /** Findings the answer rests on, so it can be traced to a computation. */
+  sources?: string[];
+  /** "model" when generated and verified, "engine" when it fell back. */
+  answered_by?: "model" | "engine";
 }
 
 export interface Goal {

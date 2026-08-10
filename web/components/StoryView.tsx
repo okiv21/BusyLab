@@ -15,6 +15,7 @@ import FindingCard from "./FindingCard";
 import { ask, listGoals, waitForJob } from "@/lib/api";
 import GoalPanel from "./GoalPanel";
 import AlertsPanel from "./AlertsPanel";
+import { AnswerSources } from "./Meaning";
 import type { Answer, Chip, Finding, Goal, Story } from "@/lib/types";
 
 export default function StoryView({
@@ -255,7 +256,16 @@ export default function StoryView({
                 {answer.answered ? (
                   <>
                     <div>{answer.answer}</div>
-                    {answer.route && (
+                    {/* The findings behind the answer. Shown rather than
+                        hidden because one failure cannot be checked for
+                        mechanically - a true but irrelevant fact placed
+                        next to the question - and seeing the sources is
+                        what lets a reader catch it. */}
+                    <AnswerSources
+                      sources={answer.sources}
+                      generated={answer.answered_by === "model"}
+                    />
+                    {answer.route && answer.answered_by !== "model" && (
                       <div
                         style={{
                           marginTop: 8,

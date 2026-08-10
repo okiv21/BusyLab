@@ -15,6 +15,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import Chart from "./charts/Chart";
+import Meaning, { Summary } from "./Meaning";
 import type { Finding } from "@/lib/types";
 import { percent } from "@/lib/format";
 import { entrance, useCountUp, usePrefersReducedMotion } from "@/lib/motion";
@@ -122,16 +123,21 @@ export default function FindingCard({
         )}
       </header>
 
-      {hero ? <HeroHeadline finding={finding} /> : (
+      {hero ? (
+        <HeroHeadline finding={finding} />
+      ) : (
         <h3
           style={{
             font: "600 19px/1.4 var(--font-display)",
             letterSpacing: "-0.01em",
           }}
         >
-          {finding.summary}
+          <Summary finding={finding} />
         </h3>
       )}
+
+      {/* Directly under the sentence, which is where a reader gets stuck. */}
+      <Meaning finding={finding} />
 
       <Chart finding={finding} />
 
@@ -251,7 +257,7 @@ function HeroHeadline({ finding }: { finding: Finding }) {
           minWidth: 260,
         }}
       >
-        {finding.summary}
+        <Summary finding={finding} />
       </h2>
     </div>
   );
