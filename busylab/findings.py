@@ -205,6 +205,11 @@ class Finding:
             "type": self.type.value,
             "chart": self.chart.value if self.chart else None,
             "summary": self.summary,
+            # What the summary means, for a reader who does not do this for a
+            # living. Computed here rather than stored so it cannot drift out
+            # of step with the finding it explains.
+            "meaning": _meaning(self),
+            "glossary": _glossary(self),
             "facts": self.facts,
             "severity": self.severity.value,
             "importance": round(self.importance, 4),
@@ -267,3 +272,16 @@ def assert_non_directive(text: str) -> None:
     problems = check_non_directive(text)
     if problems:
         raise DirectiveLanguageError(f"{text!r} {problems[0]}")
+
+
+def _meaning(finding: "Finding") -> str:
+    """Plain-language meaning, imported late to avoid an import cycle."""
+    from .explain import explain
+
+    return explain(finding)
+
+
+def _glossary(finding: "Finding") -> dict[str, str]:
+    from .explain import glossary_for
+
+    return glossary_for(finding)

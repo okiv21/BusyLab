@@ -48,7 +48,21 @@ def _money(value: float) -> str:
 
 
 def _pct(value: float) -> str:
+    """Magnitude only. For sentences where nearby words carry the direction."""
     return f"{abs(value) * 100:.0f}%"
+
+
+def _move(value: float) -> str:
+    """Direction and magnitude together, e.g. "fell 23%".
+
+    ``_pct`` drops the sign, which is right when the sentence already says
+    "down" or "grew" and wrong when the sentence is *about* which way things
+    went. "units moved 23% and average price moved 3%" reads as though both
+    rose, in a finding whose whole job is to say which of them fell.
+    """
+    if abs(value) < 0.005:  # rounds to 0%, so "moved 0%" would be misleading
+        return "held flat"
+    return f"{'fell' if value < 0 else 'rose'} {abs(value) * 100:.0f}%"
 
 
 # --------------------------------------------------------------------------
@@ -569,11 +583,8 @@ def dimension_decomposition(frame: SalesFrame) -> list[Finding]:
         ]
 
         direction = "fell" if total < 0 else "grew"
-        tail = (
-            f" {', '.join(steady)} held roughly steady."
-            if steady
-            else ""
-        )
+        listed = ", ".join(steady)
+        tail = f" {listed[:1].upper()}{listed[1:]} held roughly steady." if steady else ""
 
         findings.append(
             Finding(
@@ -667,8 +678,8 @@ def price_volume_split(frame: SalesFrame) -> list[Finding]:
             type=FindingType.DECOMPOSITION,
             summary=(
                 f"The revenue change is mostly {wording}: "
-                f"units moved {_pct(stats.safe_pct_change(q1, q0) or 0)} and "
-                f"average price moved {_pct(stats.safe_pct_change(p1, p0) or 0)}."
+                f"units {_move(stats.safe_pct_change(q1, q0) or 0)} while "
+                f"average price {_move(stats.safe_pct_change(p1, p0) or 0)}."
             ),
             facts={
                 "total_change": total_change,

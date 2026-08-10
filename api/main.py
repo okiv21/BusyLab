@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from busylab import __version__
 from busylab.narration import from_env, narrate, route_question
+from busylab.narration.answer import answer_question
 from busylab.narration.routing import answer_from_findings
 
 from .handlers import build_handlers
@@ -312,7 +313,19 @@ def ask(
     provider = from_env()
 
     decision = route_question(body.question, findings, provider, columns=columns)
-    if not decision.answerable:
+    routed = answer_from_findings(decision, findings) if decision.answerable else None
+
+    # Answer from the findings themselves rather than only handing back the
+    # routed one. Routing alone could only ever return a sentence the reader
+    # had already seen in the story, which is why the feature read as a lookup
+    # instead of an answer. Every number in the generated text is checked
+    # against the findings it cites, and any failure falls back to exactly the
+    # routed behaviour - so this cannot answer worse than routing did.
+    result = answer_question(body.question, findings, provider, fallback=routed)
+
+    if routed is None and not result.generated:
+        # Nothing routed and nothing survived verification: say so rather than
+        # dressing up a refusal as an answer.
         return {
             "answered": False,
             "message": decision.refusal,
@@ -321,24 +334,27 @@ def ask(
             ],
         }
 
-    finding = answer_from_findings(decision, findings)
-    if finding is None:
-        return {
-            "answered": False,
-            "message": "That analysis has not run on this data yet.",
-            "suggestions": [
-                {"name": r.name, "label": r.label} for r in decision.alternatives
-            ],
-        }
-
-    raw = next((f for f in story["findings"] if f["id"] == finding.id), None)
+    finding = routed
+    raw = (
+        next((f for f in story["findings"] if f["id"] == finding.id), None)
+        if finding is not None
+        else None
+    )
     return {
         "answered": True,
-        "route": {"name": decision.route.name, "label": decision.route.label},
+        "route": (
+            {"name": decision.route.name, "label": decision.route.label}
+            if decision.route
+            else None
+        ),
         "confidence": decision.confidence,
         "routed_by": decision.source,
         "finding": raw,
-        "answer": narrate(finding, provider).text,
+        "answer": result.text,
+        # Which findings the answer rests on, so it can be traced back to the
+        # computation instead of taken on trust.
+        "sources": result.sources,
+        "answered_by": result.origin,
     }
 
 
