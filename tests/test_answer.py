@@ -17,9 +17,12 @@ from busylab.findings import Evidence, Finding, FindingType, Severity
 from busylab.narration.answer import (
     AI_CAUTION,
     Answer,
+    _build_prompt,
+    _trim_facts,
     answer_question,
     entity_names,
     suggest,
+    unknown_subjects,
     verify_answer,
 )
 
@@ -450,3 +453,188 @@ class TestAdvice:
         )
         result = answer_question("q", ALL, provider, with_advice=False)
         assert not result.has_advice
+
+
+class TestUnknownSubjects:
+    """A question about something the file does not contain.
+
+    The failure this exists for came out of a live model, not a stub. Asked
+    "how are candles doing in Lagos" against a clothing shop's findings, it
+    answered "candles may be doing steadily in Lagos, as Lagos appears to have
+    held roughly steady" - every word true, and there are no candles in the
+    file. No other check catches it: no number is wrong, nothing is claimed to
+    cause anything, and the entity guard only inspects capitalised runs so a
+    lowercase noun walks straight past. The sentence asserts nothing false; it
+    just lets the question's premise stand.
+    """
+
+    def test_an_absent_noun_is_found(self):
+        # "candles" would be a poor example against this fixture, which records
+        # a "Linen Candle" - so it is present, correctly.
+        assert "bicycles" in unknown_subjects("how are bicycles doing?", ALL)
+
+    def test_a_word_the_data_contains_is_not_absent(self):
+        assert unknown_subjects("how are candles doing?", ALL) == []
+
+    def test_a_present_entity_is_not_flagged(self):
+        assert unknown_subjects("how is Linen Candle doing?", ALL) == []
+
+    def test_plurals_count_as_present(self):
+        # "Linen Candles" should match the recorded "Linen Candle".
+        assert "candles" not in unknown_subjects("how are Linen Candles?", ALL)
+
+    def test_ordinary_words_are_not_subjects(self):
+        # Otherwise every question would be full of absent "subjects".
+        assert unknown_subjects("why did revenue go up this month?", ALL) == []
+
+    def test_the_products_own_vocabulary_is_not_a_subject(self):
+        for q in ("what is my margin?", "explain the findings",
+                  "how is profit doing?"):
+            assert unknown_subjects(q, ALL) == [], q
+
+    def test_a_false_positive_causes_no_rejection_if_unmentioned(self):
+        # Deciding which words in a question name a thing is guesswork: "show
+        # me the channel breakdown" offers "breakdown", ordinary English. The
+        # guard only fires on terms the answer actually adopts, so a false
+        # positive the answer never uses is harmless.
+        assert "breakdown" in unknown_subjects("show me the channel breakdown", ALL)
+        assert verify_answer("Revenue fell 44%.", ALL, ["revenue_trend"],
+                             absent=["breakdown"]) == []
+
+    def test_an_answer_adopting_the_premise_is_rejected(self):
+        problems = verify_answer(
+            "Bicycles may be doing steadily, as things held roughly steady.",
+            ALL,
+            ["revenue_trend"],
+            absent=["bicycles"],
+        )
+        assert any("without saying so" in p for p in problems)
+
+    def test_an_answer_acknowledging_the_absence_passes(self):
+        problems = verify_answer(
+            "There is nothing about bicycles in this data.",
+            ALL,
+            ["revenue_trend"],
+            absent=["bicycles"],
+        )
+        assert problems == []
+
+    def test_the_check_is_off_when_nothing_is_absent(self):
+        assert verify_answer("Revenue fell 44%.", ALL, ["revenue_trend"]) == []
+
+    def test_the_refusal_names_a_term_the_answer_adopted(self):
+        # Named only when the absence check actually fired. The word list is a
+        # guess, and putting a guess in a refusal produced "there is nothing
+        # about breakdown in this data" for an ordinary question.
+        provider = _Provider(
+            json.dumps(
+                {"answer": "Bicycles are steady.", "used": ["revenue_trend"]}
+            )
+        )
+        result = answer_question(
+            "how are bicycles doing?", ALL, provider, with_advice=False
+        )
+        assert not result.generated
+        assert "bicycles" in result.text
+
+    def test_the_refusal_stays_generic_when_the_check_did_not_fire(self):
+        # No model, so nothing was generated and no premise was adopted. The
+        # flagged word is still only a guess, so it is not thrown at the reader.
+        provider = _Provider("", available=False)
+        result = answer_question("show me the channel breakdown", ALL, provider)
+        assert "breakdown" not in result.text
+
+    def test_the_model_is_not_told_what_is_absent(self):
+        """Deliberately not passed to the model.
+
+        Telling it was tried and made things worse. The list is a guess, and on
+        a false positive - "show me the channel breakdown" yielding "breakdown"
+        - the model dutifully refused an ordinary question. The check belongs on
+        the answer, where it only fires on a term the answer actually used.
+        """
+        provider = _Provider(
+            json.dumps({"answer": "Revenue fell 44%.", "used": ["revenue_trend"]})
+        )
+        answer_question("how are bicycles doing?", ALL, provider, with_advice=False)
+        _, user = provider.calls[0]
+        assert "nothing called" not in user
+
+
+class TestEntityShortening:
+    """A shortened product name is not an invented one."""
+
+    def test_a_shortened_name_is_allowed(self):
+        # The data records "Linen Candle"; an answer saying "Linen" about it has
+        # named the right thing. Rejecting that threw away good answers and
+        # accused the model of inventing a product it had read correctly.
+        wordy = Finding(
+            id="revenue_decomposition",
+            type=FindingType.DECOMPOSITION,
+            summary="Senator Set (Men) accounts for 54%.",
+            facts={"biggest": "Senator Set (Men)", "share": 0.54},
+            evidence=Evidence(method="contribution", p_value=0.004),
+        )
+        problems = verify_answer(
+            "Senator Set accounts for 54% of the move.",
+            [wordy],
+            ["revenue_decomposition"],
+        )
+        assert problems == []
+
+    def test_a_genuinely_invented_name_is_still_caught(self):
+        problems = verify_answer(
+            "Bamboo Diffuser accounts for 38% of the fall.",
+            ALL,
+            ["revenue_decomposition"],
+        )
+        assert any("names not in the data" in p for p in problems)
+
+
+class TestPromptCost:
+    """The free tier has a daily token allowance, and the prompt was eating it.
+
+    Sending every fact whole cost about 3,300 tokens a question. Each question
+    makes two calls, so roughly fifteen questions exhausted Groq's 100,000 a
+    day - which I found by exhausting it. Most of the weight was nested chart
+    payloads: contribution tables, per-group means, month-by-month pace rows.
+    """
+
+    def test_long_collections_are_summarised(self):
+        facts = {"contributions": [{"label": f"p{i}", "change": i} for i in range(20)]}
+        trimmed = _trim_facts(facts)
+        assert trimmed["contributions"] == "<20 items>"
+
+    def test_short_collections_are_kept(self):
+        facts = {"top": [1, 2, 3]}
+        assert _trim_facts(facts)["top"] == [1, 2, 3]
+
+    def test_scalars_are_kept_whole(self):
+        # These are the numbers an answer quotes, and what the number guard
+        # checks it against, so they must survive intact.
+        facts = {"change_pct": -0.44, "biggest": "Linen Candle", "periods": 24}
+        assert _trim_facts(facts) == facts
+
+    def test_large_mappings_are_summarised(self):
+        facts = {"means": {f"g{i}": i for i in range(12)}}
+        assert _trim_facts(facts)["means"] == "<12 entries>"
+
+    def test_the_prompt_is_capped_at_the_ranked_top(self):
+        many = [_trend() for _ in range(20)]
+        prompt = _build_prompt("q", many)
+        assert prompt.count('"id"') <= 8
+
+    def test_trimming_does_not_weaken_the_number_guard(self):
+        # The guard reads the full facts, not the trimmed copy, so a number the
+        # model was never shown is still permitted if it quotes it correctly.
+        wordy = Finding(
+            id="revenue_decomposition",
+            type=FindingType.DECOMPOSITION,
+            summary="s",
+            facts={
+                "share": 0.38,
+                "contributions": [{"label": f"p{i}", "change": 1000 + i} for i in range(20)],
+            },
+            evidence=Evidence(method="contribution", p_value=0.01),
+        )
+        assert "<20 items>" in json.dumps(_trim_facts(wordy.facts))
+        assert verify_answer("It moved 1005.", [wordy], ["revenue_decomposition"]) == []

@@ -418,15 +418,26 @@ def verify_answer(
         )
 
     if absent:
-        # The question named something the file does not contain. An answer
-        # that neither mentions nor denies it lets the premise stand, which is
-        # how "candles may be doing steadily in Lagos" came out of a clothing
-        # shop's data without a single false statement in it.
+        # Only when the answer actually talks about the absent thing.
+        #
+        # The failure being caught is an answer that adopts the question's
+        # premise: "candles may be doing steadily in Lagos" from a clothing
+        # shop's data, where every word is true and there are no candles.
+        #
+        # Rejecting on absence alone was too blunt. Deciding which words in a
+        # question name a thing is guesswork - "show me the channel breakdown"
+        # offers "breakdown", which is ordinary English - and on a false
+        # positive that rule forced the answer to deny a word the reader never
+        # meant as a subject. Requiring the term to be echoed removes that
+        # harm completely: a word the answer never uses cannot mislead through
+        # the answer, and the ones it does use are exactly the premises it
+        # adopted.
         lowered = text.lower()
-        if not any(phrase in lowered for phrase in _ABSENCE):
+        echoed = [word for word in absent if word in lowered]
+        if echoed and not any(phrase in lowered for phrase in _ABSENCE):
             problems.append(
-                f"the question asked about {', '.join(absent)}, which is not in "
-                f"this data, and the answer does not say so"
+                f"the answer talks about {', '.join(echoed)}, which is not in "
+                f"this data, without saying so"
             )
 
     problems.extend(check_non_directive(text))
@@ -482,7 +493,7 @@ def suggest(
         {
             "id": f.id,
             "says": f.summary,
-            "facts": f.facts,
+            "facts": _trim_facts(f.facts),
             "certain": f.evidence.is_significant,
         }
         for f in findings[:6]  # the ranked top; beyond that it is noise
@@ -543,6 +554,47 @@ Reply with JSON only:
 discarded."""
 
 
+#: How many findings a question is answered from. The story is ranked, so the
+#: tail is the least relevant material and the most expensive to send.
+_PROMPT_FINDINGS = 8
+
+#: Longest collection kept inside a fact. Above this it is a chart payload
+#: rather than a number the wording needs.
+_MAX_FACT_ITEMS = 4
+
+
+def _trim_facts(facts: dict) -> dict:
+    """The parts of a finding's facts that wording could actually use.
+
+    Sending every fact whole cost about 3,300 tokens a question, and each
+    question makes two calls - so roughly fifteen questions exhausted Groq's
+    free daily allowance of 100,000. Most of that weight is nested: per-product
+    contribution tables, per-group means, month-by-month pace rows. Those exist
+    to draw charts, and a sentence never quotes more than the headline figure
+    from them.
+
+    Scalars are kept whole, because those are the numbers that get quoted and
+    the number guard checks the answer against them. Long collections are
+    replaced by their length, which keeps the fact's existence visible without
+    carrying its bulk.
+    """
+    trimmed: dict = {}
+    for key, value in facts.items():
+        if isinstance(value, (list, tuple)):
+            if len(value) <= _MAX_FACT_ITEMS:
+                trimmed[key] = value
+            else:
+                trimmed[key] = f"<{len(value)} items>"
+        elif isinstance(value, dict):
+            if len(value) <= _MAX_FACT_ITEMS:
+                trimmed[key] = value
+            else:
+                trimmed[key] = f"<{len(value)} entries>"
+        else:
+            trimmed[key] = value
+    return trimmed
+
+
 def _build_prompt(
     question: str, findings: list[Finding], absent: list[str] | None = None
 ) -> str:
@@ -551,21 +603,19 @@ def _build_prompt(
             "id": f.id,
             "type": f.type.value,
             "says": f.summary,
-            "facts": f.facts,
+            "facts": _trim_facts(f.facts),
             "certainty": f.evidence.strength,
             "significant": f.evidence.is_significant,
         }
-        for f in findings
+        for f in findings[:_PROMPT_FINDINGS]
     ]
-    warning = ""
-    if absent:
-        warning = (
-            f"\nIMPORTANT: this data contains nothing called "
-            f"{', '.join(absent)}. Say so plainly instead of answering as "
-            f"though it were there.\n"
-        )
+    # Deliberately not told which of the question's words are missing from the
+    # data. Deciding which words name a thing is guesswork - "show me the
+    # channel breakdown" yields "breakdown" - and feeding that guess into the
+    # prompt made the model refuse an ordinary question. The absence check runs
+    # on the answer instead, where it only fires on a term the answer adopted.
     return (
-        f'Question: "{question}"\n{warning}\n'
+        f'Question: "{question}"\n\n'
         f"Findings available:\n{json.dumps(payload, default=str, indent=2)}\n\n"
         "Answer the question from these findings."
     )
@@ -612,12 +662,17 @@ def answer_question(
                 "engine",
                 reasons,
             )
-        if absent:
-            # Name what is missing. "That is not something this data can
-            # answer" is true and unhelpful; the reader asked about candles and
-            # deserves to be told there are none, rather than left wondering
-            # whether the question was understood.
-            missing = ", ".join(absent)
+        # Only a term the absence check actually rejected, never every word the
+        # word list flagged - putting a guess in front of the reader is how
+        # "there is nothing about breakdown in this data" got said about a
+        # perfectly ordinary question.
+        echoed = [
+            word
+            for word in absent
+            if any("talks about" in reason and word in reason for reason in reasons)
+        ]
+        if echoed:
+            missing = ", ".join(echoed)
             return Answer(
                 f"There is nothing about {missing} in this data, so there is "
                 f"nothing to report on it.",
