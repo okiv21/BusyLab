@@ -15,7 +15,7 @@ import FindingCard from "./FindingCard";
 import { ask, listGoals, waitForJob } from "@/lib/api";
 import GoalPanel from "./GoalPanel";
 import AlertsPanel from "./AlertsPanel";
-import { AnswerSources } from "./Meaning";
+import { Advice, AnswerSources } from "./Meaning";
 import type { Answer, Chip, Finding, Goal, Story } from "@/lib/types";
 
 export default function StoryView({
@@ -265,6 +265,10 @@ export default function StoryView({
                       sources={answer.sources}
                       generated={answer.answered_by === "model"}
                     />
+                    <Advice
+                      advice={answer.advice}
+                      caution={answer.advice_caution}
+                    />
                     {answer.route && answer.answered_by !== "model" && (
                       <div
                         style={{
@@ -280,6 +284,10 @@ export default function StoryView({
                 ) : (
                   <>
                     <div>{answer.message}</div>
+                    <Advice
+                      advice={answer.advice}
+                      caution={answer.advice_caution}
+                    />
                     {answer.suggestions && answer.suggestions.length > 0 && (
                       <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
                         {answer.suggestions.map((s) => (

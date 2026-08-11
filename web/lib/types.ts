@@ -156,6 +156,12 @@ export interface Answer {
   sources?: string[];
   /** "model" when generated and verified, "engine" when it fell back. */
   answered_by?: "model" | "engine";
+  /** Suggestions. Never render without advice_caution. */
+  advice?: string;
+  /** The caution that must accompany advice. */
+  advice_caution?: string;
+  /** Why a generated answer was discarded, when one was. */
+  rejected?: string[];
 }
 
 export interface Goal {

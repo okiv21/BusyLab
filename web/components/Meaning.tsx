@@ -163,3 +163,74 @@ export function AnswerSources({
     </div>
   );
 }
+
+
+/**
+ * Suggestions, and the caution that is not optional.
+ *
+ * Everything else in BusyLab reports what was computed. This does not - it is a
+ * model's reading of the numbers, which is a different kind of claim and is
+ * worth less. Rendering the two identically would be the dishonest choice, so
+ * this sits in its own bordered block, visually cooler than a finding, and the
+ * caution renders from the same component. There is deliberately no code path
+ * that shows the advice without it.
+ */
+export function Advice({
+  advice,
+  caution,
+}: {
+  advice?: string;
+  caution?: string;
+}) {
+  if (!advice || !caution) return null;
+
+  return (
+    <aside
+      style={{
+        marginTop: 14,
+        border: "1px solid #e4ded2",
+        borderRadius: 12,
+        background: "#fcfbf8",
+        padding: "14px 16px",
+      }}
+    >
+      <div
+        style={{
+          fontFamily: "var(--font-display)",
+          fontWeight: 600,
+          fontSize: 11.5,
+          letterSpacing: "0.09em",
+          textTransform: "uppercase",
+          color: "var(--ink-light)",
+          marginBottom: 8,
+        }}
+      >
+        Things you could consider
+      </div>
+
+      <div
+        style={{
+          fontSize: 14.5,
+          lineHeight: 1.6,
+          color: "var(--ink)",
+          whiteSpace: "pre-wrap",
+        }}
+      >
+        {advice}
+      </div>
+
+      <p
+        style={{
+          margin: "12px 0 0",
+          paddingTop: 10,
+          borderTop: "1px dashed #e4ded2",
+          fontSize: 12,
+          lineHeight: 1.5,
+          color: "var(--ink-light)",
+        }}
+      >
+        {caution}
+      </p>
+    </aside>
+  );
+}

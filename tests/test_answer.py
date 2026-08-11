@@ -15,9 +15,11 @@ import pytest
 
 from busylab.findings import Evidence, Finding, FindingType, Severity
 from busylab.narration.answer import (
+    AI_CAUTION,
     Answer,
     answer_question,
     entity_names,
+    suggest,
     verify_answer,
 )
 
@@ -234,10 +236,18 @@ class TestNonDirective:
         assert problems
 
     def test_length_is_capped(self):
+        # The cap is generous on purpose: "explain this so I can understand it"
+        # deserves a paragraph, and a tight cap rejected the honest answer and
+        # fell back to a one-line finding that ignored the question.
         problems = verify_answer(
-            "Revenue fell 44%. " + "word " * 100, ALL, ["revenue_trend"]
+            "Revenue fell 44%. " + "word " * 200, ALL, ["revenue_trend"]
         )
         assert any("too long" in p for p in problems)
+
+    def test_a_paragraph_length_explanation_is_allowed(self):
+        assert verify_answer(
+            "Revenue fell 44%. " + "word " * 100, ALL, ["revenue_trend"]
+        ) == []
 
     def test_empty_is_rejected(self):
         assert verify_answer("   ", ALL, ["revenue_trend"]) == ["empty"]
@@ -280,14 +290,18 @@ class TestAnswerQuestion:
             "how is revenue?", ALL, provider, fallback=_trend()
         )
         assert not result.generated
-        assert result.text == _trend().summary
+        # Labelled, not passed off as an answer to the question asked.
+        assert "could not answer that directly" in result.text
+        assert _trend().summary in result.text
         assert result.rejected
 
     def test_with_no_model_it_behaves_as_before(self):
         provider = _Provider("", available=False)
         result = answer_question("q", ALL, provider, fallback=_trend())
-        assert result.text == _trend().summary
+        assert _trend().summary in result.text
         assert result.origin == "engine"
+        # No model means no suggestions either.
+        assert not result.has_advice
 
     def test_with_no_model_and_no_fallback_it_refuses(self):
         provider = _Provider("", available=False)
@@ -299,7 +313,7 @@ class TestAnswerQuestion:
     def test_unparseable_output_falls_back(self):
         provider = _Provider("I think revenue went down a lot")
         result = answer_question("q", ALL, provider, fallback=_trend())
-        assert result.text == _trend().summary
+        assert _trend().summary in result.text
         assert "JSON" in result.rejected[0]
 
     def test_a_typo_citation_alongside_a_real_one_still_verifies(self):
@@ -327,22 +341,112 @@ class TestAnswerQuestion:
         assert "Never calculate" in system
         assert "decomposition" in system
 
-    def test_temperature_is_zero(self):
-        # This is retrieval and wording, not invention.
-        seen = {}
+    def test_the_answer_call_is_deterministic(self):
+        # Answering is retrieval and wording, not invention. Advice is a
+        # separate call and is allowed to be warmer, so this checks the first.
+        seen = []
 
         class _Recorder(_Provider):
             def complete(self, system, user, *, max_tokens=200, temperature=0.2):
-                seen["temperature"] = temperature
+                seen.append(temperature)
                 return self.reply
 
         provider = _Recorder(
             json.dumps({"answer": "Revenue fell 44%.", "used": ["revenue_trend"]})
         )
-        answer_question("q", ALL, provider)
-        assert seen["temperature"] == 0.0
+        answer_question("q", ALL, provider, with_advice=False)
+        assert seen[0] == 0.0
 
     def test_an_empty_question_does_not_reach_the_model(self):
         provider = _Provider("should not be called")
         answer_question("  ", ALL, provider, fallback=_trend())
         assert provider.calls == []
+
+
+class TestAdvice:
+    """Suggestions are a deliberate exception to the non-directive rule.
+
+    Being told only what is true and never what it might mean turned out to be
+    unhelpful to a reader without a business background, so this section is
+    allowed to suggest actions. What must not slip is the honesty around it:
+    the numbers are still checked, and the caution is not optional.
+    """
+
+    def test_advice_may_be_directive(self):
+        # The whole point. check_non_directive must not be applied here.
+        provider = _Provider("Consider dropping the line that loses money.")
+        text, caution = suggest("what should I do?", ALL, provider)
+        assert "Consider" in text
+        assert caution == AI_CAUTION
+
+    def test_the_caution_always_accompanies_advice(self):
+        provider = _Provider("Try focusing on the returning customers.")
+        text, caution = suggest("q", ALL, provider)
+        assert text and caution
+        # Never one without the other.
+        assert bool(text) == bool(caution)
+
+    def test_invented_numbers_are_still_rejected(self):
+        # A wrong figure is wrong whichever section it appears in.
+        provider = _Provider("Revenue fell 87%, so consider cutting stock.")
+        text, caution = suggest("q", ALL, provider)
+        assert text == "" and caution == ""
+
+    def test_real_numbers_are_allowed(self):
+        provider = _Provider("Revenue fell 44%, so the trend is worth watching.")
+        text, _ = suggest("q", ALL, provider)
+        assert "44" in text
+
+    def test_no_model_means_no_advice(self):
+        provider = _Provider("...", available=False)
+        assert suggest("q", ALL, provider) == ("", "")
+
+    def test_no_findings_means_no_advice(self):
+        provider = _Provider("something")
+        assert suggest("q", [], provider) == ("", "")
+
+    def test_an_empty_reply_produces_nothing(self):
+        assert suggest("q", ALL, _Provider("   ")) == ("", "")
+
+    def test_a_rambling_reply_is_dropped(self):
+        # No suggestion beats a wall of text nobody reads.
+        assert suggest("q", ALL, _Provider("word " * 300)) == ("", "")
+
+    def test_the_prompt_permits_action_and_forbids_invention(self):
+        provider = _Provider("fine")
+        suggest("q", ALL, provider)
+        system, user = provider.calls[0]
+        assert "allowed to suggest actions" in system
+        assert "Do not invent numbers" in system
+        assert "revenue_trend" in user
+
+    def test_the_question_reaches_the_model(self):
+        provider = _Provider("fine")
+        suggest("why is revenue down?", ALL, provider)
+        assert "why is revenue down?" in provider.calls[0][1]
+
+    def test_advice_is_attached_to_a_verified_answer(self):
+        provider = _Provider(
+            json.dumps({"answer": "Revenue fell 44%.", "used": ["revenue_trend"]})
+        )
+        result = answer_question("q", ALL, provider)
+        # The stub returns the same reply to both calls, so the advice call
+        # gets JSON back - which contains a real number and passes.
+        assert result.generated
+        assert result.caution == AI_CAUTION if result.advice else True
+
+    def test_advice_survives_a_rejected_answer(self):
+        # The findings are computed either way, so withholding suggestions
+        # because the wording failed verification would help nobody.
+        provider = _Provider("Consider watching the falling line.")
+        result = answer_question("q", ALL, provider, fallback=_trend())
+        assert not result.generated
+        assert result.has_advice
+        assert result.caution == AI_CAUTION
+
+    def test_advice_can_be_turned_off(self):
+        provider = _Provider(
+            json.dumps({"answer": "Revenue fell 44%.", "used": ["revenue_trend"]})
+        )
+        result = answer_question("q", ALL, provider, with_advice=False)
+        assert not result.has_advice

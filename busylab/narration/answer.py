@@ -110,6 +110,21 @@ _HEDGES = (
 _NUMBER = re.compile(r"\d[\d,]*\.?\d*")
 
 
+#: Shown with every generated suggestion, without exception.
+#:
+#: The rest of this codebase reports only what was computed, and suggestions are
+#: a different kind of thing: they are a model's reading of the numbers, not a
+#: measurement of them. Saying so plainly is what makes it reasonable to offer
+#: them at all, so the caution travels with the text rather than living in a
+#: settings page or a footer nobody reads.
+AI_CAUTION = (
+    "This part is a suggestion from an AI model reading your numbers, not "
+    "something BusyLab calculated. It can be wrong, and it does not know "
+    "anything about your business beyond this file. Use it as a starting point "
+    "for your own thinking rather than as the basis for a decision."
+)
+
+
 @dataclass
 class Answer:
     """A generated answer, and everything needed to distrust it."""
@@ -121,10 +136,19 @@ class Answer:
     origin: str = "model"
     #: Why a generated answer was rejected. Empty when it was accepted.
     rejected: list[str] = field(default_factory=list)
+    #: Optional suggestions. Separate from ``text`` because it is a different
+    #: kind of claim and must never be read as part of the finding.
+    advice: str = ""
+    #: Travels with ``advice``, always. Empty when there is no advice.
+    caution: str = ""
 
     @property
     def generated(self) -> bool:
         return self.origin == "model"
+
+    @property
+    def has_advice(self) -> bool:
+        return bool(self.advice)
 
 
 def entity_names(findings: list[Finding]) -> set[str]:
@@ -304,10 +328,90 @@ def verify_answer(
 
     problems.extend(check_non_directive(text))
 
-    if len(text.split()) > 90:
+    # Generous, because a question like "explain this so I can understand it"
+    # deserves a paragraph and a tight cap would reject the honest answer and
+    # fall back to a one-line finding that does not address the question.
+    if len(text.split()) > 160:
         problems.append("too long to read as an answer")
 
     return problems
+
+
+ADVICE_PROMPT = """You suggest what a small business owner might consider \
+doing, based on findings that have already been calculated from their own \
+sales data.
+
+Unlike the rest of this product you ARE allowed to suggest actions. That is \
+the point of this section.
+
+Rules:
+- Base every suggestion on the findings you are given. Do not invent numbers.
+- Two or three short suggestions, as plain sentences. No headings, no preamble.
+- Be concrete about this business, not generic advice that would fit anyone.
+- Say plainly when a finding is too uncertain to act on.
+- Never claim something is guaranteed to work.
+
+Return the suggestions as plain text only."""
+
+
+def suggest(
+    question: str,
+    findings: list[Finding],
+    provider: Provider,
+) -> tuple[str, str]:
+    """Suggestions for what to do, and the caution that must accompany them.
+
+    A deliberate exception to the non-directive rule the rest of the engine
+    holds to, made because being told only what is true and never what it
+    might mean for a decision turned out to be genuinely unhelpful to someone
+    without a business background.
+
+    The number guard still applies - a wrong figure is wrong whatever section
+    it sits in - but the non-directive guard does not, since advice is what
+    this function exists to produce. Returns empty strings when there is
+    nothing trustworthy to say, because no suggestion is better than a
+    confident irrelevant one.
+    """
+    if not findings or not provider.available():
+        return "", ""
+
+    payload = [
+        {
+            "id": f.id,
+            "says": f.summary,
+            "facts": f.facts,
+            "certain": f.evidence.is_significant,
+        }
+        for f in findings[:6]  # the ranked top; beyond that it is noise
+    ]
+    prompt = (
+        (f'The owner asked: "{question}"\n\n' if question.strip() else "")
+        + f"Findings:\n{json.dumps(payload, default=str, indent=2)}\n\n"
+        "What might they consider?"
+    )
+
+    try:
+        raw = provider.complete(ADVICE_PROMPT, prompt, max_tokens=400, temperature=0.4)
+    except ProviderError as exc:
+        log.info("advice unavailable: %s", exc)
+        return "", ""
+
+    text = raw.strip()
+    if not text:
+        return "", ""
+
+    # Numbers are still checked, against every finding shown to the model.
+    permitted = _permitted_numbers(findings[:6])
+    invented = _invented_numbers(text, permitted)
+    if invented:
+        log.warning("rejected advice, invented numbers: %s", invented)
+        return "", ""
+
+    if len(text.split()) > 220:
+        log.info("rejected advice: too long")
+        return "", ""
+
+    return text, AI_CAUTION
 
 
 SYSTEM_PROMPT = """You answer a small business owner's question about their \
@@ -361,6 +465,7 @@ def answer_question(
     provider: Provider,
     *,
     fallback: Finding | None = None,
+    with_advice: bool = True,
 ) -> Answer:
     """Answer a question from computed findings, or fall back to the old way.
 
@@ -369,15 +474,43 @@ def answer_question(
     routing it replaces.
     """
     def _fell_back(reasons: list[str]) -> Answer:
+        # Advice is attached here rather than at the end, because several
+        # failures return early - unparseable JSON, a missing brace - and those
+        # were silently losing the suggestions too. The findings are computed
+        # regardless of whether the model managed to word an answer.
+        return _with_advice(_bare_fallback(reasons))
+
+    def _bare_fallback(reasons: list[str]) -> Answer:
         if fallback is not None:
-            return Answer(fallback.summary, [fallback.id], "engine", reasons)
+            # Labelled as the nearest computed finding rather than presented as
+            # an answer. Handing back a sentence about revenue when the
+            # question was "explain this to me" and calling it the answer is
+            # worse than admitting the question was not understood - it reads
+            # as the product ignoring what was asked.
+            return Answer(
+                f"I could not answer that directly from this data. The closest "
+                f"thing already calculated is: {fallback.summary}",
+                [fallback.id],
+                "engine",
+                reasons,
+            )
         return Answer(
             "That is not something this data can answer.", [], "engine", reasons
         )
 
+    def _with_advice(result: Answer) -> Answer:
+        # Nothing was asked, so nothing is suggested. suggest() itself accepts
+        # a blank question - the story-level summary uses that - but here an
+        # empty box should not reach the model at all.
+        if with_advice and question.strip():
+            result.advice, result.caution = suggest(question, findings, provider)
+        return result
+
     if not question.strip() or not findings:
         return _fell_back(["nothing to answer from"])
     if not provider.available():
+        # No model means no answer and no advice; the engine's own findings are
+        # still correct, which is what the fallback carries.
         return _fell_back(["no model configured"])
 
     try:
@@ -418,5 +551,4 @@ def answer_question(
     if problems:
         log.warning("rejected answer for %r: %s", question[:60], problems[0])
         return _fell_back(problems)
-
-    return Answer(text, cited_ids, "model")
+    return _with_advice(Answer(text, cited_ids, "model"))

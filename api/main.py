@@ -360,6 +360,14 @@ def ask(
         # computation instead of taken on trust.
         "sources": result.sources,
         "answered_by": result.origin,
+        # Suggestions, and the caution that must be shown with them. Separate
+        # fields so the frontend cannot render one without the other.
+        "advice": result.advice,
+        "advice_caution": result.caution,
+        # Why a generated answer was discarded. Returned rather than only
+        # logged: without it, diagnosing a bad answer meant guessing which of
+        # six checks rejected it.
+        "rejected": result.rejected,
     }
 
 
