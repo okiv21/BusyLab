@@ -464,152 +464,165 @@ function WaterfallChart({ finding }: { finding: Finding }) {
   }[];
   const start = finding.chart_data?.start;
   const end = finding.chart_data?.end;
+  const { setActive, opacityFor, reset } = useHoverFocus();
+
   if (!steps.length || !start) return <Empty label="Nothing to decompose." />;
 
-  // Hand-rolled rather than Recharts: a waterfall is a running balance, which
-  // means invisible offset bars, and the arithmetic is clearer written out.
-  const shown = steps.filter((s) => s.change !== 0).slice(0, 7);
-  let running = start.value;
-  const bars = shown.map((s) => {
-    const from = running;
-    running += s.change;
-    return { ...s, from, to: running };
-  });
+  /*
+   * Diverging bars around zero, in HTML rather than SVG.
+   *
+   * Two problems with what this replaces, both of which made the chart unable
+   * to answer the question it exists for.
+   *
+   * It was a running-balance waterfall, so the opening and closing totals sat
+   * on the same scale as the individual changes. With a business turning over
+   * 6.5m and slices moving by 30k, every change was 0.4% of the plot height and
+   * collapsed to the 2px minimum: eight different contributions all rendered as
+   * identical flat dashes. Rescaling the changes on their own axis while leaving
+   * the totals on another would be a dual-axis chart, which invents a
+   * relationship between the two scales. The totals are not part of the
+   * comparison, they are context for it - so they became a caption and the
+   * changes got the whole plot.
+   *
+   * And it was SVG with a 720-unit viewBox, which on a 375px phone scales by
+   * 0.37 and renders 12px labels at 4.4px. SVG scales its text along with its
+   * geometry. In HTML the bars scale and the text does not, which is the
+   * behaviour wanted at every width.
+   */
+  const shown = steps
+    .filter((s) => s.change !== 0)
+    .sort((a, b) => Math.abs(b.change) - Math.abs(a.change))
+    .slice(0, 7);
+  if (!shown.length) return <Empty label="Nothing moved enough to show." />;
 
-  const values = [start.value, end?.value ?? running, ...bars.flatMap((b) => [b.from, b.to])];
-  const max = Math.max(...values, 0);
-  const min = Math.min(...values, 0);
-  const span = max - min || 1;
-
-  const W = 720;
-  const H = 210;
-  const pad = { top: 26, bottom: 40 };
-  const plot = H - pad.top - pad.bottom;
-  const cols = bars.length + 2;
-  const slot = W / cols;
-  const barW = Math.min(74, slot * 0.6);
-  const y = (v: number) => pad.top + plot - ((v - min) / span) * plot;
-
-  const column = (i: number) => i * slot + slot / 2 - barW / 2;
+  const reach = Math.max(...shown.map((s) => Math.abs(s.change))) || 1;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }}>
-      <line x1={0} y1={y(min)} x2={W} y2={y(min)} stroke={LINE} />
-      {/* opening */}
-      <rect
-        x={column(0)}
-        y={y(start.value)}
-        width={barW}
-        height={Math.max(2, y(min) - y(start.value))}
-        rx={6}
-        fill={GREY}
-      />
-      <text
-        x={column(0) + barW / 2}
-        y={y(start.value) - 8}
-        textAnchor="middle"
-        fontFamily="Albert Sans"
-        fontSize={11.5}
-        fontWeight={600}
-        fill={INK_LIGHT}
+    <div {...reset}>
+      {/* The totals, as context rather than as bars competing for the scale. */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          gap: 8,
+          flexWrap: "wrap",
+          fontSize: 12.5,
+          color: INK_LIGHT,
+          marginBottom: 12,
+        }}
       >
-        {compact(start.value)}
-      </text>
-      <text
-        x={column(0) + barW / 2}
-        y={H - 14}
-        textAnchor="middle"
-        fontFamily="Albert Sans"
-        fontSize={11}
-        fill={INK_LIGHT}
-      >
-        {start.label}
-      </text>
+        <span>{start.label}</span>
+        <strong style={{ color: "var(--ink)", fontSize: 14 }}>
+          {compact(start.value)}
+        </strong>
+        {end && (
+          <>
+            <span aria-hidden>&rarr;</span>
+            <span>{end.label}</span>
+            <strong style={{ color: "var(--ink)", fontSize: 14 }}>
+              {compact(end.value)}
+            </strong>
+          </>
+        )}
+      </div>
 
-      {bars.map((b, i) => {
-        const top = y(Math.max(b.from, b.to));
-        const height = Math.max(2, Math.abs(y(b.from) - y(b.to)));
-        const positive = b.change > 0;
-        return (
-          <g key={b.label}>
-            <rect
-              x={column(i + 1)}
-              y={top}
-              width={barW}
-              height={height}
-              rx={5}
-              fill={positive ? GOOD : ACCENT}
-              opacity={0.92}
+      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+        {shown.map((s, i) => {
+          const positive = s.change > 0;
+          const share = Math.max(1.5, (Math.abs(s.change) / reach) * 100);
+          return (
+            <div
+              key={s.label}
+              onMouseEnter={() => setActive(i)}
+              style={{
+                display: "grid",
+                // Wide enough for a real product name. At 22% "Two-Piece
+                // Lounge Set" was ellipsised, and a bar you cannot identify
+                // without hovering is not a chart.
+                gridTemplateColumns: "minmax(96px, 30%) 1fr auto",
+                alignItems: "center",
+                gap: 10,
+                // A hit target taller than the bar itself.
+                padding: "5px 0",
+                opacity: opacityFor(i),
+                transition: `opacity ${CHART_MS}ms ease`,
+              }}
             >
-              <animate
-                attributeName="height"
-                from="0"
-                to={String(height)}
-                dur="0.5s"
-                fill="freeze"
-              />
-            </rect>
-            <text
-              x={column(i + 1) + barW / 2}
-              y={top - 8}
-              textAnchor="middle"
-              fontFamily="Albert Sans"
-              fontSize={11.5}
-              fontWeight={600}
-              fill={positive ? "#177e5b" : "#c74722"}
-            >
-              {positive ? "+" : "−"}
-              {compact(Math.abs(b.change))}
-            </text>
-            <text
-              x={column(i + 1) + barW / 2}
-              y={H - 14}
-              textAnchor="middle"
-              fontFamily="Albert Sans"
-              fontSize={11}
-              fill={INK_LIGHT}
-            >
-              {b.label.length > 13 ? `${b.label.slice(0, 12)}…` : b.label}
-            </text>
-          </g>
-        );
-      })}
+              <div
+                style={{
+                  fontSize: 12.5,
+                  lineHeight: 1.25,
+                  color: INK_LIGHT,
+                  textAlign: "right",
+                  // Wrapping beats ellipsis here: the label is the identity of
+                  // the bar, so losing its end costs more than an extra line.
+                  overflowWrap: "anywhere",
+                }}
+                title={s.label}
+              >
+                {s.label}
+              </div>
 
-      {end && (
-        <>
-          <rect
-            x={column(cols - 1)}
-            y={y(end.value)}
-            width={barW}
-            height={Math.max(2, y(min) - y(end.value))}
-            rx={6}
-            fill={GREY}
-            opacity={0.55}
-          />
-          <text
-            x={column(cols - 1) + barW / 2}
-            y={y(end.value) - 8}
-            textAnchor="middle"
-            fontFamily="Albert Sans"
-            fontSize={11.5}
-            fontWeight={600}
-            fill={INK_LIGHT}
-          >
-            {compact(end.value)}
-          </text>
-          <text
-            x={column(cols - 1) + barW / 2}
-            y={H - 14}
-            textAnchor="middle"
-            fontFamily="Albert Sans"
-            fontSize={11}
-            fill={INK_LIGHT}
-          >
-            {end.label}
-          </text>
-        </>
-      )}
-    </svg>
+              {/* Two halves either side of a zero rule, so a fall reads as a
+                  fall rather than as a shorter rise. */}
+              <div style={{ display: "flex", alignItems: "center", height: 18 }}>
+                <div
+                  style={{
+                    flex: 1,
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    height: "100%",
+                  }}
+                >
+                  {!positive && (
+                    <div
+                      style={{
+                        width: `${share}%`,
+                        height: "100%",
+                        background: ACCENT,
+                        borderRadius: "4px 0 0 4px",
+                      }}
+                    />
+                  )}
+                </div>
+                {/* The zero rule: a solid hairline, one shade off the surface. */}
+                <div style={{ width: 1, height: "100%", background: LINE }} />
+                <div style={{ flex: 1, height: "100%" }}>
+                  {positive && (
+                    <div
+                      style={{
+                        width: `${share}%`,
+                        height: "100%",
+                        background: GOOD,
+                        borderRadius: "0 4px 4px 0",
+                      }}
+                    />
+                  )}
+                </div>
+              </div>
+
+              {/* Labelled on every bar. Selective labelling is the rule for a
+                  series of many points; there are at most seven here and each
+                  value is the finding. It also supplies the relief the green
+                  requires - it falls below 3:1 against this surface, so the
+                  figure has to be readable as text, not inferred from length. */}
+              <div
+                style={{
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  minWidth: 62,
+                  textAlign: "right",
+                  color: positive ? "#177e5b" : "#c74722",
+                }}
+              >
+                {positive ? "+" : "−"}
+                {compact(Math.abs(s.change))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
