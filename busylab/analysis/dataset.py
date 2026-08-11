@@ -181,7 +181,7 @@ def build(
 
     frame[DATE] = cleaning.to_datetime(raw[columns[Role.DATE]]).values.reindex(raw.index)
     frame[PRODUCT] = (
-        cleaning.to_text(raw[columns[Role.PRODUCT]]).reindex(raw.index).astype("object")
+        cleaning.to_labels(raw[columns[Role.PRODUCT]]).reindex(raw.index).astype("object")
     )
 
     def numeric(role: Role) -> pd.Series | None:
@@ -251,14 +251,14 @@ def build(
         if column is None or column not in raw.columns:
             continue
         canonical = role.value
-        frame[canonical] = cleaning.to_text(raw[column]).reindex(raw.index)
+        frame[canonical] = cleaning.to_labels(raw[column]).reindex(raw.index)
         dimensions[canonical] = role.value.replace("_", " ")
 
     # User-tagged generic groupings (spec 3.3's middle path).
     for verdict in detection.verdicts:
         if verdict.role is Role.GROUP_BY and verdict.column in raw.columns:
             canonical = f"group_{verdict.column}"
-            frame[canonical] = cleaning.to_text(raw[verdict.column]).reindex(raw.index)
+            frame[canonical] = cleaning.to_labels(raw[verdict.column]).reindex(raw.index)
             dimensions[canonical] = verdict.column
 
     before = len(frame)

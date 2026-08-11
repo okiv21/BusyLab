@@ -9,12 +9,15 @@ evidence Layer 2 uses to decide what a column is.
 
 from __future__ import annotations
 
+import logging
 import re
 import warnings
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+
+log = logging.getLogger(__name__)
 
 #: Strings that mean "no value" regardless of what the column holds.
 NULL_TOKENS: frozenset[str] = frozenset(
@@ -191,9 +194,121 @@ def to_datetime(series: pd.Series) -> ParseResult:
                 best = ParseResult(parsed, rate, dayfirst=dayfirst)
 
     assert best is not None
-    # When both orderings parse equally well the dates are unambiguous
-    # (day > 12 never appeared), so the flag carries no information.
-    return best
+    # Both orderings parsing everything does not mean the dates are
+    # unambiguous. A column can hold "01/11/2025" and "11-01-2025" - the same
+    # day, written day-first with slashes and month-first with dashes - and
+    # every value parses under either flag, so the rate cannot choose between
+    # them and whichever was tried first silently wins.
+    #
+    # That is not a cosmetic problem. In a real export it scattered around
+    # fifty rows into months they did not belong to, which invented a seasonal
+    # pattern out of the empty months it created and distorted the trend. The
+    # numbers were all correct; they were filed under the wrong dates.
+    return _resolve_ambiguous_dates(text, best)
+
+
+#: Two numbers and a year, separated by anything. The shape that cannot be read
+#: without knowing the writer's convention: 01/11/2025 is either 1 November or
+#: 11 January.
+_TWO_PART_DATE = re.compile(r"^\s*(\d{1,2})\s*([/\-.])\s*(\d{1,2})\s*\2\s*(\d{2,4})")
+
+
+def _resolve_ambiguous_dates(text: pd.Series, parsed: ParseResult) -> ParseResult:
+    """Re-read values whose day and month order cannot be told apart.
+
+    Grouped by separator, because a file that mixes conventions mixes them
+    consistently: this export wrote day-first with slashes and month-first with
+    dashes throughout. Each group is settled on its own evidence, in order:
+
+    1. A value with a first part above 12 can only be a day, and one with a
+       second part above 12 can only be a month. One such value settles the
+       whole group, which is what makes this cheap on real data.
+    2. Failing that, the unambiguous dates elsewhere in the column - ISO
+       strings, written-out months - say roughly when this data is from, and
+       the reading that lands inside that window is the right one.
+    3. Failing both, nothing is changed. Guessing would be worse than the
+       existing behaviour, which at least is consistent.
+    """
+    if parsed.values.empty or parsed.rate == 0.0:
+        return parsed
+
+    matches = text.str.extract(_TWO_PART_DATE)
+    ambiguous = matches[0].notna()
+    if not ambiguous.any():
+        return parsed
+
+    # Where the confident dates sit. Built from the values this function is not
+    # about to touch, so it cannot be circular.
+    settled = parsed.values[~ambiguous].dropna()
+    window = (settled.min(), settled.max()) if len(settled) >= 3 else None
+
+    result = parsed.values.copy()
+    changed = False
+
+    for separator, group in matches[ambiguous].groupby(matches[1]):
+        first = pd.to_numeric(group[0], errors="coerce")
+        second = pd.to_numeric(group[2], errors="coerce")
+
+        if (first > 12).any():
+            dayfirst = True
+        elif (second > 12).any():
+            dayfirst = False
+        elif window is not None:
+            dayfirst = _fits_window(text.loc[group.index], window)
+            if dayfirst is None:
+                continue
+        else:
+            continue
+
+        if dayfirst == parsed.dayfirst:
+            continue
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            reparsed = pd.to_datetime(
+                text.loc[group.index],
+                errors="coerce",
+                dayfirst=dayfirst,
+                format="mixed",
+            )
+        result.loc[group.index] = reparsed
+        changed = True
+        log.info(
+            "dates separated by %r read as %s",
+            separator,
+            "day first" if dayfirst else "month first",
+        )
+
+    if not changed:
+        return parsed
+    return ParseResult(
+        result,
+        float(result.notna().mean()) if len(result) else 0.0,
+        dayfirst=parsed.dayfirst,
+    )
+
+
+def _fits_window(
+    values: pd.Series, window: tuple[pd.Timestamp, pd.Timestamp]
+) -> bool | None:
+    """Which reading puts these dates inside the range the column already covers.
+
+    Returns None when neither reading is clearly better, so the caller can
+    leave well alone rather than pick by a hair.
+    """
+    low, high = window
+    scores: dict[bool, int] = {}
+    for dayfirst in (True, False):
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            candidate = pd.to_datetime(
+                values, errors="coerce", dayfirst=dayfirst, format="mixed"
+            )
+        inside = candidate.between(low, high)
+        scores[dayfirst] = int(inside.sum())
+
+    if scores[True] == scores[False]:
+        return None
+    return scores[True] > scores[False]
 
 
 def to_text(series: pd.Series) -> pd.Series:
@@ -202,6 +317,37 @@ def to_text(series: pd.Series) -> pd.Series:
     if values.empty:
         return pd.Series(dtype="object")
     return values.astype(str).str.strip()
+
+
+def to_labels(series: pd.Series) -> pd.Series:
+    """Text for grouping, with spelling variants of one label folded together.
+
+    Hand-kept and exported sheets carry the same category under several
+    spellings: "catering", "Catering" and "CATERING", or "dine-in" and
+    "DINE-IN". Grouping on the raw strings treats those as different things,
+    which is quietly destructive rather than merely untidy - a channel's rows
+    get split three ways, its average is computed from a third of the data, and
+    the segmentation then reports one spelling of a label as wildly outperforming
+    another spelling of the same label.
+
+    Case, surrounding whitespace, internal runs of whitespace and separator
+    style are all folded. The surviving label is the most common original
+    spelling rather than a lowercased version, because the reader should see
+    their own data back: "Dine-in", not "dine in".
+    """
+    values = to_text(series)
+    if values.empty:
+        return values
+
+    # Fold on a key, keep the most frequent spelling for display.
+    keys = (
+        values.str.casefold()
+        .str.replace(r"[_\-/]+", " ", regex=True)
+        .str.replace(r"\s+", " ", regex=True)
+        .str.strip()
+    )
+    counts = values.groupby(keys).agg(lambda s: s.value_counts().idxmax())
+    return keys.map(counts)
 
 
 def looks_numeric(series: pd.Series, threshold: float = 0.9) -> bool:

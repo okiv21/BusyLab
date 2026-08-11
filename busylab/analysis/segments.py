@@ -18,6 +18,8 @@ does would be worse than no chart.
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import pandas as pd
 
@@ -25,6 +27,8 @@ from ..findings import Evidence, Finding, FindingType, Severity
 from ..roles import Tier
 from . import stats
 from .dataset import PRODUCT, REVENUE, SalesFrame
+
+log = logging.getLogger(__name__)
 
 #: A dimension with more levels than this is an identifier, not a segment.
 MAX_LEVELS = 12
@@ -92,25 +96,38 @@ def segmentation(frame: SalesFrame) -> list[Finding]:
 
         confirmed = result.significant and not confounded
         if confounded and result.significant:
-            findings.append(
-                _mix_confounded_finding(
-                    column, label, ranked, gap, result, top, bottom, len(candidates)
-                )
+            # Not reported at all any more, where it used to be reported with
+            # the confound named. Two reasons for the change.
+            #
+            # It is not a finding. The sentence amounted to "these groups
+            # differ, except that may be because they sell different things" -
+            # which is a description of a comparison that failed, dressed as a
+            # result. On a planted-noise dimension the engine produced exactly
+            # that, and a reader has no way to tell it apart from a real one.
+            #
+            # And it crowded the story. Every dimension that fails this way got
+            # a card and a chart, so the more columns a file had, the more of
+            # the story was taken up by comparisons that had already been
+            # judged not like-for-like.
+            log.debug(
+                "suppressed %s: product mix differs across its groups", column
             )
             continue
 
         if confirmed:
             summary = (
-                f"Average order value differs by {label}: {top} runs about "
-                f"{abs(gap) * 100:.0f}% higher than {bottom}, and that gap holds "
-                "up after accounting for how many comparisons were made."
+                f"A typical {top} order is worth about "
+                f"{abs(gap) * 100:.0f}% more than a typical {bottom} one. "
+                f"That difference is real: it is too large to be chance, even "
+                f"after allowing for the fact that several groups were compared."
             )
             severity, importance = Severity.WATCH, 0.7
         else:
             summary = (
-                f"{top} may run higher than {bottom} by {label}, but once the "
-                "number of comparisons is accounted for the difference is not "
-                "yet clear. Worth a look rather than a conclusion."
+                f"A typical {top} order looks bigger than a typical {bottom} "
+                f"one, but not clearly enough to rely on - a gap this size "
+                f"could come up by chance when several groups are compared. "
+                f"Worth keeping an eye on rather than acting on."
             )
             severity, importance = Severity.NEUTRAL, 0.4
 
@@ -177,60 +194,6 @@ def _product_mix_differs(frame: SalesFrame, column: str) -> bool:
     return bool(np.isfinite(p) and p < 0.05)
 
 
-def _mix_confounded_finding(
-    column: str,
-    label: str,
-    ranked: pd.Series,
-    gap: float,
-    result: stats.TestResult,
-    top: str,
-    bottom: str,
-    family_size: int,
-) -> Finding:
-    """Report the gap and name the confound, rather than claiming a difference."""
-    return Finding(
-        id=f"segmentation_{column}",
-        type=FindingType.SEGMENTATION,
-        summary=(
-            f"Average order value differs by {label} — {top} is about "
-            f"{abs(gap) * 100:.0f}% above {bottom} — but these groups also sell "
-            "a different mix of products, so the gap may be what they sell "
-            "rather than a difference between them."
-        ),
-        facts={
-            "dimension": label,
-            "column": column,
-            "levels": int(len(ranked)),
-            "highest": top,
-            "highest_value": float(ranked.iloc[0]),
-            "lowest": bottom,
-            "lowest_value": float(ranked.iloc[-1]),
-            "gap_pct": gap,
-            "confirmed": False,
-            "mix_confounded": True,
-            "means": {str(k): float(v) for k, v in ranked.items()},
-        },
-        evidence=Evidence(
-            method=f"{result.method}, with a product-mix check",
-            p_value=result.p_value,
-            adjusted_p=result.adjusted_p,
-            sample_size=result.sample_size,
-            correction="Benjamini-Hochberg FDR",
-            notes=[
-                f"{family_size} dimensions tested together.",
-                "Product mix differs across these groups (chi-square, p < 0.05), "
-                "so this comparison is not like-for-like.",
-            ],
-        ),
-        severity=Severity.NEUTRAL,
-        importance=0.3,
-        tier=Tier.SEGMENT,
-        chart_data={
-            "groups": [{"label": str(k), "value": float(v)} for k, v in ranked.items()]
-        },
-    )
-
-
 def product_relationships(frame: SalesFrame) -> list[Finding]:
     """Which products move together over time.
 
@@ -294,10 +257,10 @@ def product_relationships(frame: SalesFrame) -> list[Finding]:
             id="product_relationships",
             type=FindingType.RELATIONSHIP,
             summary=(
-                f"{best['a']} and {best['b']} move {together} from period to "
-                f"period (correlation {best['correlation']:.2f}). This shows "
-                "they rise and fall alongside each other, not that one drives "
-                "the other."
+                f"When {best['a']} sells more, {best['b']} tends to "
+                f"{'sell more too' if best['correlation'] > 0 else 'sell less'}. "
+                f"They rise and fall {together}, which is not the same as one "
+                f"causing the other - a shared season or promotion does it too."
             ),
             facts={
                 "pairs": strong[:10],

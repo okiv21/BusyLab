@@ -4,6 +4,7 @@ import type {
   Columns,
   DigestPreview,
   Goal,
+  GoalProgress,
   Job,
   NewGoal,
   Story,
@@ -107,8 +108,17 @@ export function getStory(datasetId: string) {
   return request<Story>(`/datasets/${datasetId}/story`);
 }
 
+export function sendDigest(datasetId: string) {
+  return request<{ sent: boolean; detail: string; recipient: string }>(
+    `/datasets/${datasetId}/digest/send`,
+    { method: "POST" }
+  );
+}
+
 export function listGoals(datasetId: string) {
-  return request<{ goals: Goal[] }>(`/datasets/${datasetId}/goals`);
+  return request<{ goals: Goal[]; progress: GoalProgress[] }>(
+    `/datasets/${datasetId}/goals`
+  );
 }
 
 export function createGoal(datasetId: string, goal: NewGoal) {

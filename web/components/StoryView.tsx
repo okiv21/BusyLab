@@ -16,7 +16,14 @@ import { ask, listGoals, waitForJob } from "@/lib/api";
 import GoalPanel from "./GoalPanel";
 import AlertsPanel from "./AlertsPanel";
 import { Advice, AnswerSources } from "./Meaning";
-import type { Answer, Chip, Finding, Goal, Story } from "@/lib/types";
+import type {
+  Answer,
+  Chip,
+  Finding,
+  Goal,
+  GoalProgress,
+  Story,
+} from "@/lib/types";
 
 export default function StoryView({
   story,
@@ -30,10 +37,13 @@ export default function StoryView({
   onPresent?: () => void;
 }) {
   const [goals, setGoals] = useState<Goal[]>([]);
+  const [goalProgress, setGoalProgress] = useState<GoalProgress[]>([]);
 
   const refreshGoals = useCallback(async () => {
     try {
-      setGoals((await listGoals(datasetId)).goals);
+      const loaded = await listGoals(datasetId);
+      setGoals(loaded.goals);
+      setGoalProgress(loaded.progress ?? []);
     } catch {
       /* goals are additive; failing to load them must not break the story */
     }
@@ -327,6 +337,7 @@ export default function StoryView({
       <GoalPanel
         datasetId={datasetId}
         goals={goals}
+        progress={goalProgress}
         hasProfit={story.columns?.includes("profit") ?? false}
         onChanged={async () => {
           await refreshGoals();

@@ -17,8 +17,11 @@ import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
+import numpy as np
+
 from busylab.analysis import analyse, build
-from busylab.analysis.goals import measure
+from busylab.analysis.goals import goal_pace, measure
+from busylab.findings import Severity
 from busylab.detection import detect
 from busylab.goals import Goal
 
@@ -165,7 +168,8 @@ def test_share_of_target_is_reported(sales) -> None:
     finding = _goal_finding(result)
 
     assert 0 < finding.facts["share_of_target"] < 1
-    assert "% of its" in finding.summary
+    # The share is still stated; the wording around it is plainer now.
+    assert "% of" in finding.summary
 
 
 # --------------------------------------------------------------------------
@@ -355,3 +359,88 @@ def test_an_unknown_metric_is_rejected(client, analysed) -> None:
 
 def test_goals_on_a_missing_dataset_are_a_404(client) -> None:
     assert client.get("/datasets/nope/goals").status_code == 404
+
+
+class TestATargetAlwaysReportsSomething:
+    """A stored target with no measurement beside it looks untracked.
+
+    Both of these states used to produce no finding at all, which from the
+    outside is indistinguishable from the feature not working. Someone who sets
+    a target and gets silence has no way to tell which it is.
+    """
+
+    def _frame(self):
+        from busylab.analysis.dataset import build
+        from busylab.detection.engine import detect
+
+        rng = np.random.default_rng(2)
+        n = 120
+        raw = pd.DataFrame(
+            {
+                "Order Date": pd.date_range("2025-01-01", periods=n, freq="D"),
+                "Product": rng.choice(["A", "B"], n),
+                "Quantity": rng.integers(1, 5, n),
+                "Unit Price": rng.uniform(100, 900, n).round(2),
+            }
+        )
+        return build(raw, detect(raw))
+
+    def test_a_future_window_says_it_has_not_begun(self):
+        frame = self._frame()
+        goal = Goal(
+            id="g1",
+            metric="revenue",
+            target=70_000,
+            start=date(2026, 6, 30),
+            end=date(2026, 9, 29),
+            label="revenue target",
+        )
+        findings = goal_pace(frame, [goal])
+        assert len(findings) == 1
+        text = findings[0].summary
+        assert "starts after the last sale" in text
+        # And it names the date, so the reader can see why.
+        assert "2025" in text
+
+    def test_a_finished_window_still_reports(self):
+        frame = self._frame()
+        goal = Goal(
+            id="g2",
+            metric="revenue",
+            target=1_000,
+            start=date(2025, 1, 1),
+            end=date(2025, 2, 1),
+            label="early target",
+        )
+        findings = goal_pace(frame, [goal])
+        assert len(findings) == 1
+        assert "finished at" in findings[0].summary
+
+    def test_the_not_started_finding_is_not_alarming(self):
+        # It is information, not a problem with the business.
+        frame = self._frame()
+        goal = Goal(
+            id="g3",
+            metric="revenue",
+            target=5_000,
+            start=date(2030, 1, 1),
+            end=date(2030, 3, 1),
+            label="future",
+        )
+        finding = goal_pace(frame, [goal])[0]
+        assert finding.severity is Severity.NEUTRAL
+        assert finding.importance < 0.4
+
+    def test_a_missing_metric_still_produces_nothing(self):
+        # No profit column means the goal cannot be measured at all, which is a
+        # different case and correctly stays silent.
+        frame = self._frame()
+        goal = Goal(
+            id="g4",
+            metric="profit",
+            target=100,
+            start=date(2025, 1, 1),
+            end=date(2025, 3, 1),
+            label="profit target",
+        )
+        assert goal_pace(frame, [goal]) == []

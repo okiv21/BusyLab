@@ -12,7 +12,7 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import { createGoal, deleteGoal } from "@/lib/api";
-import type { Goal } from "@/lib/types";
+import type { Goal, GoalProgress } from "@/lib/types";
 
 /** Sensible default window: the rest of the current quarter. */
 function defaultWindow(): { start: string; end: string } {
@@ -27,14 +27,17 @@ function defaultWindow(): { start: string; end: string } {
 export default function GoalPanel({
   datasetId,
   goals,
+  progress = [],
   hasProfit,
   onChanged,
 }: {
   datasetId: string;
   goals: Goal[];
+  progress?: GoalProgress[];
   hasProfit: boolean;
   onChanged: () => void;
 }) {
+  const progressFor = (id: string) => progress.find((p) => p.goal_id === id);
   const [open, setOpen] = useState(false);
   const [metric, setMetric] = useState<"revenue" | "profit">("revenue");
   const [target, setTarget] = useState("");
@@ -124,33 +127,39 @@ export default function GoalPanel({
               key={goal.id}
               style={{
                 display: "flex",
-                alignItems: "center",
-                gap: 12,
+                flexDirection: "column",
+                gap: 8,
                 background: "var(--page)",
                 borderRadius: 12,
                 padding: "10px 14px",
                 fontSize: 14,
-                flexWrap: "wrap",
               }}
             >
-              <strong>{goal.label || `${goal.metric} target`}</strong>
-              <span style={{ color: "var(--ink-muted)" }}>
-                {goal.target.toLocaleString()} {goal.metric} · {goal.start} to{" "}
-                {goal.end}
-              </span>
-              <button
-                onClick={() => remove(goal.id)}
-                disabled={busy}
-                style={{
-                  marginLeft: "auto",
-                  border: "none",
-                  background: "transparent",
-                  color: "var(--ink-light)",
-                  fontSize: 13,
-                }}
-              >
-                Remove
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", flexWrap: "wrap" }}>
+                <strong>{goal.label || `${goal.metric} target`}</strong>
+                <span style={{ color: "var(--ink-muted)" }}>
+                  {goal.target.toLocaleString()} {goal.metric} · {goal.start} to{" "}
+                  {goal.end}
+                </span>
+                <button
+                  onClick={() => remove(goal.id)}
+                  disabled={busy}
+                  style={{
+                    marginLeft: "auto",
+                    border: "none",
+                    background: "transparent",
+                    color: "var(--ink-light)",
+                    fontSize: 13,
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+
+              {/* Where it actually stands. A target with no measurement beside
+                  it is indistinguishable from a target nothing is tracking,
+                  which is exactly how this panel read before. */}
+              <GoalStanding progress={progressFor(goal.id)} target={goal.target} />
             </div>
           ))}
         </div>
@@ -256,5 +265,84 @@ function Field({
       </span>
       {children}
     </label>
+  );
+}
+
+
+/**
+ * What the engine actually measured against a target.
+ *
+ * The bar is drawn from banked-so-far against the target, with a marker where
+ * the pace needed to be by now. That second mark is the point: a bar at 40%
+ * means nothing until you know whether 40% was on schedule or behind.
+ *
+ * When there is nothing to measure - a window that starts after the data ends
+ * is the common case - the sentence says so rather than the panel going quiet.
+ */
+function GoalStanding({
+  progress,
+  target,
+}: {
+  progress?: GoalProgress;
+  target: number;
+}) {
+  if (!progress) {
+    return (
+      <div style={{ fontSize: 13, color: "var(--ink-light)" }}>
+        Not measured yet - it is worked out when the analysis next runs.
+      </div>
+    );
+  }
+
+  const actual = Number(progress.facts?.actual ?? 0);
+  const elapsed = Number(progress.facts?.elapsed ?? 0);
+  const banked = target > 0 ? Math.min(actual / target, 1) : 0;
+  const tone =
+    progress.severity === "urgent"
+      ? "var(--accent)"
+      : progress.severity === "good"
+        ? "#15866b"
+        : "var(--ink-light)";
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {target > 0 && elapsed > 0 && (
+        <div
+          style={{
+            position: "relative",
+            height: 8,
+            borderRadius: 999,
+            background: "#eae4d8",
+            overflow: "visible",
+          }}
+        >
+          <div
+            style={{
+              width: `${banked * 100}%`,
+              height: "100%",
+              borderRadius: 999,
+              background: tone,
+            }}
+          />
+          {/* Where the pace needed to be by now. */}
+          <div
+            title="Where you needed to be by now"
+            style={{
+              position: "absolute",
+              left: `${Math.min(elapsed * 100, 100)}%`,
+              top: -3,
+              width: 2,
+              height: 14,
+              background: "var(--ink)",
+              opacity: 0.55,
+            }}
+          />
+        </div>
+      )}
+
+      <div style={{ fontSize: 13, lineHeight: 1.5, color: "var(--ink-muted)" }}>
+        {progress.says}
+      </div>
+    </div>
   );
 }

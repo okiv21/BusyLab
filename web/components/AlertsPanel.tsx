@@ -11,8 +11,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { acknowledgeAlert, getDigest, listAlerts } from "@/lib/api";
-import type { Alert, DigestPreview } from "@/lib/types";
+import { acknowledgeAlert, getDigest, listAlerts, sendDigest } from "@/lib/api";
+import type { Alert, DigestDelivery,
+  DigestPreview } from "@/lib/types";
 
 const LEVEL: Record<string, { label: string; fg: string; bg: string }> = {
   high: { label: "HIGH", fg: "#c74722", bg: "#fbe3d8" },
@@ -192,7 +193,103 @@ export default function AlertsPanel({ datasetId }: { datasetId: string }) {
           {/* The engine renders the email; this shows exactly what would be
               sent rather than a second implementation of it. */}
           <div dangerouslySetInnerHTML={{ __html: digest.html }} />
+
+          {/* Who receives it, when, and a way to prove it works.
+              Without this the preview was a picture of an email with nothing
+              to say whether anything would ever send it - which is why it read
+              as decoration when the delivery behind it was real. */}
+          <DigestDeliveryBar
+            datasetId={datasetId}
+            delivery={digest.delivery}
+          />
         </motion.div>
+      )}
+    </div>
+  );
+}
+
+
+/**
+ * Where this email goes and when, with a way to send it now.
+ *
+ * A rendered preview says nothing about whether delivery works, and the only
+ * other way to find out was to wait for Monday. Sending on demand answers it
+ * in one click, and the result is reported honestly: with no mail server
+ * configured the digest goes to the server log, and that is reported as not
+ * sent rather than as success.
+ */
+function DigestDeliveryBar({
+  datasetId,
+  delivery,
+}: {
+  datasetId: string;
+  delivery?: DigestDelivery;
+}) {
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  if (!delivery) return null;
+
+  const send = async () => {
+    setSending(true);
+    setResult(null);
+    try {
+      const outcome = await sendDigest(datasetId);
+      setResult(outcome.detail);
+    } catch (err) {
+      setResult(err instanceof Error ? err.message : "Could not send it.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        borderTop: "1px solid var(--line)",
+        padding: "12px 18px",
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        flexWrap: "wrap",
+        fontSize: 13,
+        color: "var(--ink-muted)",
+      }}
+    >
+      <div style={{ flex: "1 1 260px", lineHeight: 1.55 }}>
+        {delivery.recipient ? (
+          <>
+            Goes to <strong>{delivery.recipient}</strong>
+            {delivery.is_fallback && " (the fallback address)"} · {delivery.schedule}
+          </>
+        ) : (
+          <>
+            No address is set for this data yet, so nothing is being sent.
+          </>
+        )}
+        {!delivery.can_send && (
+          <div style={{ marginTop: 4, color: "var(--ink-light)" }}>
+            No mail server is configured, so it is written to the server log
+            rather than emailed.
+          </div>
+        )}
+      </div>
+
+      {delivery.recipient && (
+        <button
+          onClick={send}
+          disabled={sending}
+          className="btn btn-ghost"
+          style={{ fontSize: 13, padding: "8px 14px" }}
+        >
+          {sending ? "Sending…" : "Send it to me now"}
+        </button>
+      )}
+
+      {result && (
+        <div style={{ flexBasis: "100%", fontSize: 12.5, color: "var(--ink-light)" }}>
+          {result}
+        </div>
       )}
     </div>
   );

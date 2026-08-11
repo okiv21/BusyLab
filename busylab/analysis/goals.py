@@ -232,14 +232,36 @@ def goal_pace(frame: SalesFrame, goals: list[Goal]) -> list[Finding]:
 
     for goal in goals:
         progress = measure(frame, goal)
-        if progress is None or progress.state == "not_started":
+        if progress is None:
             continue
-        if progress.state == "in_progress" and progress.projected <= 0:
-            continue  # too early to say anything
-
+        # "Nothing to say yet" used to mean saying nothing at all, which from
+        # the outside is indistinguishable from the target not being tracked.
+        # Someone who sets a target and gets silence back has no way to tell
+        # whether it is being measured, so these two states now report the
+        # reason rather than being skipped.
         findings.append(_to_finding(progress))
 
     return findings
+
+
+#: Past this multiple of the target, a percentage stops being readable.
+_ABSURD_SHARE = 3.0
+
+
+def _share_words(share: float) -> str:
+    """How far along a target is, in words that survive a bad target.
+
+    A target typed in as 70,000 for a business turning over millions produces
+    "137413% of target", which is correct and tells the reader nothing except
+    that something looks broken. Past three times the target the multiple is
+    the honest summary, and the exact figure sits in the sentence anyway.
+
+    Returns a fragment that expects the target to follow it, so callers read
+    "... lands about 45% of the 40,000,000 target".
+    """
+    if share >= _ABSURD_SHARE:
+        return f"about {share:.0f} times"
+    return f"about {share:.0%} of"
 
 
 def _to_finding(progress: GoalProgress) -> Finding:
@@ -260,42 +282,85 @@ def _to_finding(progress: GoalProgress) -> Finding:
             names = " and ".join(c.product for c in progress.gap_drivers[:2])
             driver_clause = f" The shortfall sits mostly in {names}."
 
+    if progress.state == "not_started":
+        # Almost always a window typed in for next quarter while the file stops
+        # at last month. Saying so is the whole value: a reader looking at an
+        # empty target panel cannot tell that apart from a broken feature.
+        summary = (
+            f"{goal.name} covers {goal.start} to {goal.end}, which starts after "
+            f"the last sale in your file ({progress.as_of}). Nothing has been "
+            f"measured against it yet - upload data from that window and it "
+            f"will start reporting."
+        )
+        return Finding(
+            id=f"goal_{goal.id}",
+            type=FindingType.GOAL_PACE,
+            summary=summary,
+            facts=progress.to_dict(),
+            evidence=Evidence(method="the window has not begun"),
+            severity=Severity.NEUTRAL,
+            importance=0.2,
+            tier=Tier.CORE,
+        )
+
+    if progress.state == "in_progress" and progress.projected <= 0:
+        # Genuinely too early to project, which is different from not tracking.
+        summary = (
+            f"{goal.name} has {progress.actual:,.0f} of its "
+            f"{goal.target:,.0f} {metric_word} target so far, but only "
+            f"{progress.elapsed:.0%} of the window has passed - too little to "
+            f"say where it will land."
+        )
+        return Finding(
+            id=f"goal_{goal.id}",
+            type=FindingType.GOAL_PACE,
+            summary=summary,
+            facts=progress.to_dict(),
+            evidence=Evidence(method="too early in the window to project"),
+            severity=Severity.NEUTRAL,
+            importance=0.3,
+            tier=Tier.CORE,
+        )
+
     if progress.state == "finished":
         if progress.actual >= goal.target:
             summary = (
-                f"{goal.name} closed at {progress.actual:,.0f} against a target "
-                f"of {goal.target:,.0f}, {share:.0%} of it."
+                f"{goal.name} finished at {progress.actual:,.0f} against a "
+                f"target of {goal.target:,.0f} - {_share_words(share)} it."
             )
             severity = Severity.GOOD
         else:
             summary = (
-                f"{goal.name} closed at {progress.actual:,.0f} against a target "
-                f"of {goal.target:,.0f}, {share:.0%} of it.{driver_clause}"
+                f"{goal.name} finished at {progress.actual:,.0f} against a "
+                f"target of {goal.target:,.0f} - {_share_words(share)} it."
+                f"{driver_clause}"
             )
             severity = Severity.WATCH
         importance = 0.7
     elif progress.on_track:
         summary = (
-            f"At current pace {goal.name} reaches about {share:.0%} of its "
-            f"{goal.target:,.0f} {metric_word} target, with "
-            f"{progress.actual:,.0f} banked so far."
+            f"{goal.name} is on course: {progress.actual:,.0f} {metric_word} so "
+            f"far against a target of {goal.target:,.0f}, which at this pace "
+            f"lands at {_share_words(share)} it."
         )
         severity = Severity.GOOD
         importance = 0.72
     elif progress.could_still_hit:
         summary = (
-            f"At current pace {goal.name} reaches about {share:.0%} of its "
-            f"{goal.target:,.0f} {metric_word} target, though the range still "
-            f"reaches {progress.projected_high:,.0f} so the target is not out "
-            f"of reach.{driver_clause}"
+            f"{goal.name} is behind: at this pace it lands "
+            f"{_share_words(share)} the {goal.target:,.0f} target, though the "
+            f"range still "
+            f"reaches {progress.projected_high:,.0f} so it is not out of "
+            f"reach.{driver_clause}"
         )
         severity = Severity.WATCH
         importance = 0.8
     else:
         summary = (
-            f"At current pace {goal.name} reaches about {share:.0%} of its "
-            f"{goal.target:,.0f} {metric_word} target, a shortfall of "
-            f"{progress.gap:,.0f} even at the top of the range.{driver_clause}"
+            f"{goal.name} will not be met at this pace: it lands "
+            f"{_share_words(share)} the {goal.target:,.0f} {metric_word} "
+            f"target, short by {progress.gap:,.0f} even at the most optimistic "
+            f"end of the range.{driver_clause}"
         )
         severity = Severity.URGENT
         importance = 0.86

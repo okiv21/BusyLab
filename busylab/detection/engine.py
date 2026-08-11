@@ -25,6 +25,7 @@ import pandas as pd
 
 from ..roles import (
     MONETARY_ROLES,
+    REQUIRED_ROLES,
     ROLE_SPECS,
     TIER_SPECS,
     Role,
@@ -215,6 +216,42 @@ NAME_REQUIRED_ROLES: frozenset[Role] = frozenset(
 )
 
 
+#: How label-like a leftover column must look to be kept as a dimension.
+#:
+#: Set from the same scorer the categorical roles use, so this asks exactly the
+#: question those roles ask - "is this a handful of repeated labels" - without
+#: also having to guess which of channel, region or category it is. Below this
+#: the column is free text, an identifier, or a measurement, none of which
+#: group into anything readable.
+DIMENSION_FLOOR = 0.45
+
+#: Roles whose veto is reported rather than worked around: the ones the analysis
+#: cannot run without, plus unit price and cost, where a wrong column changes
+#: every number downstream instead of merely losing a chart.
+_MUST_BE_RAISED: frozenset[Role] = REQUIRED_ROLES | {
+    Role.QUANTITY,
+    Role.UNIT_PRICE,
+    Role.COST,
+}
+
+#: A dimension with only one value groups into a single bar, and one with a
+#: value per row is an identifier. Both produce charts that say nothing.
+MIN_DIMENSION_VALUES = 2
+MAX_DIMENSION_VALUES = 30
+
+
+def _is_extra_dimension(profile: ContentProfile) -> bool:
+    """Whether an unclaimed column is worth offering as something to group by."""
+    if profile.n_unique < MIN_DIMENSION_VALUES or profile.n_unique > MAX_DIMENSION_VALUES:
+        return False
+    # Mostly-numeric columns are measurements or codes, not labels, even when
+    # they happen to repeat - a size chart of 38, 40, 42 is the exception and
+    # is not worth the false positives on quantities and prices.
+    if profile.numeric_rate > 0.8:
+        return False
+    return content_layer._score_low_card_label(profile) >= DIMENSION_FLOOR
+
+
 def _build_candidates(profile: ContentProfile, column: str) -> list[RoleCandidate]:
     """Blend the two layers into one score per plausible role."""
     keyword_scores = {m.role: m.score for m in keyword_layer.match_name(column)}
@@ -388,11 +425,53 @@ def detect(
             continue
         vetoed = [c for c in verdict.candidates if c.vetoed]
         if vetoed:
-            verdict.status = "conflict"
             top = vetoed[0]
-            verdict.reason = (
-                f"named like {ROLE_SPECS[top.role].label} but the values do not match"
-            )
+            named_like = ROLE_SPECS[top.role].label
+            # A veto on a role the analysis depends on has to be raised, not
+            # worked around. A column called "date" holding place names might
+            # mean the dates are somewhere else, or it might mean the file is
+            # broken; either way the owner needs to know, and quietly demoting
+            # it to a grouping hides the problem behind a chart. A veto on a
+            # softer role is different: "Customer" holding New and Returning is
+            # simply not a customer id, and there is nothing to warn about.
+            if top.role not in _MUST_BE_RAISED and _is_extra_dimension(
+                verdict.profile
+            ):
+                # The name promised one thing and the values are a short list of
+                # labels. "Customer" holding New and Returning, or "Customer
+                # Type" holding Retailer and Wholesaler, is not a customer id -
+                # but it is a genuinely useful way to split the business, and
+                # stopping to ask about it buys nothing. The values are what
+                # they are, so it is taken as a dimension and the mismatch is
+                # recorded rather than raised.
+                verdict.role = Role.GROUP_BY
+                verdict.status = "dimension"
+                verdict.confidence = 0.5
+                verdict.reason = (
+                    f"named like {named_like}, but the values are labels, "
+                    f"so it is used as a way to group instead"
+                )
+            else:
+                verdict.status = "conflict"
+                verdict.reason = (
+                    f"named like {named_like} but the values do not match"
+                )
+        elif _is_extra_dimension(verdict.profile):
+            # A column the thirteen roles have no name for, whose values are a
+            # handful of repeated labels: Daypart, Staff, Size, Sales Rep,
+            # Customer Type, Returned. These were being discarded, and in a
+            # real file they are routinely the most interesting thing in it -
+            # whether dinner tickets beat lunch, whether one salesperson's
+            # orders are larger, whether wholesalers behave like retailers.
+            #
+            # Nothing is claimed about what such a column *means*; it is only
+            # offered as something to group by, which is all the analyses need.
+            # The machinery for that already existed and had no way of ever
+            # being reached, because GROUP_BY is otherwise user-assigned only.
+            verdict.role = Role.GROUP_BY
+            verdict.status = "dimension"
+            verdict.confidence = 0.5
+            verdict.reason = "extra grouping column, recognised from its values"
         else:
             verdict.status = "unknown"
             verdict.reason = "not recognised"

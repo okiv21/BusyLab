@@ -195,4 +195,26 @@ export interface DigestPreview {
   is_empty: boolean;
   html: string;
   text: string;
+  /** Who it goes to and when. Absent on older builds. */
+  delivery?: DigestDelivery;
+}
+
+
+/** Where a target actually stands, computed by the engine. */
+export interface GoalProgress {
+  goal_id: string;
+  says: string;
+  meaning?: string;
+  severity: Severity;
+  facts: Record<string, any>;
+}
+
+/** Who the digest goes to and when, so the preview is not just a picture. */
+export interface DigestDelivery {
+  recipient: string;
+  is_fallback: boolean;
+  /** False means it is written to the server log rather than emailed. */
+  can_send: boolean;
+  mailer: string;
+  schedule: string;
 }

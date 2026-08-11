@@ -542,7 +542,104 @@ def preview_digest(
         for raw in store.list_alerts(dataset_id)
     ]
     digest = build_digest(findings, alerts)
-    return {**digest.to_dict(), "html": digest.to_html(), "text": digest.to_text()}
+
+    # Who it goes to, and when. Without this the preview was a rendered email
+    # with no indication that anything would ever send it, which is why it read
+    # as decoration - the machinery behind it was real the whole time.
+    from busylab.digest import mailer_from_env
+
+    recipient = (dataset.get("recipient") or "").strip()
+    fallback = os.environ.get("BUSYLAB_DIGEST_TO", "").strip()
+    mailer = mailer_from_env()
+
+    return {
+        **digest.to_dict(),
+        "html": digest.to_html(),
+        "text": digest.to_text(),
+        "delivery": {
+            "recipient": recipient or fallback,
+            "is_fallback": not recipient and bool(fallback),
+            # False means the digest is written to the server log instead, which
+            # is a supported setup rather than a failure. LogMailer reports
+            # itself as available, so availability is the wrong question - what
+            # matters is whether anything reaches an inbox.
+            "can_send": mailer.name != "log",
+            "mailer": mailer.name,
+            # The cron in .github/workflows/scheduled-refresh.yml.
+            "schedule": "Mondays at 07:00 UTC, and the 1st of each month",
+        },
+    }
+
+
+@app.post("/datasets/{dataset_id}/digest/send", status_code=200)
+def send_digest_now(
+    dataset_id: str, store = Depends(get_store)
+) -> dict[str, Any]:
+    """Send this dataset's digest immediately.
+
+    Exists so the preview can be proved rather than trusted. Reading a rendered
+    email tells you nothing about whether delivery works, and the alternative
+    was waiting until Monday to find out.
+    """
+    dataset = store.get_dataset(dataset_id)
+    if dataset is None:
+        raise HTTPException(status_code=404, detail="No such dataset.")
+    story = dataset.get("story")
+    if not story:
+        raise HTTPException(status_code=409, detail="The analysis has not finished.")
+
+    recipient = (dataset.get("recipient") or "").strip()
+    if not recipient and not os.environ.get("BUSYLAB_DIGEST_TO", "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Set an address for this dataset first.",
+        )
+
+    from busylab.alerts import Alert, AlertKind, AlertLevel
+    from busylab.digest import build_digest, mailer_from_env, send_digest
+
+    findings = _rebuild_findings(story)
+    alerts = [
+        Alert(
+            kind=AlertKind(raw["kind"]),
+            level=AlertLevel(raw["level"]),
+            title=raw["title"],
+            detail=raw["detail"],
+            subject=raw.get("subject", ""),
+            period=raw.get("period", ""),
+            finding_id=raw.get("finding_id"),
+        )
+        for raw in store.list_alerts(dataset_id)
+    ]
+    digest = build_digest(findings, alerts)
+    if digest.is_empty:
+        return {
+            "sent": False,
+            "detail": "There is nothing worth emailing yet.",
+            "recipient": recipient,
+        }
+
+    mailer = mailer_from_env()
+    to = recipient or os.environ.get("BUSYLAB_DIGEST_TO", "").strip()
+    delivered = send_digest(digest, to, mailer)
+
+    if mailer.name == "log":
+        # Reporting this as sent would be a lie: it went to the server log.
+        return {
+            "sent": False,
+            "detail": (
+                "No mail server is configured, so the digest was written to the "
+                "server log instead of being emailed."
+            ),
+            "recipient": to,
+        }
+    return {
+        "sent": delivered,
+        "detail": (
+            f"Sent to {to}." if delivered else "The mail server refused it."
+        ),
+        "recipient": to,
+    }
 
 
 #: Shared secret for the external scheduler. Render's free tier spins down, so
@@ -658,9 +755,45 @@ class GoalRequest(BaseModel):
 def list_goals(
     dataset_id: str, store = Depends(get_store)
 ) -> dict[str, Any]:
-    if store.get_dataset(dataset_id) is None:
+    """Every target, with where it actually stands.
+
+    The stored target on its own is what the panel used to show, and a target
+    with no measurement beside it looks exactly like a target nothing is
+    tracking. The progress is computed here so the panel can always say
+    something - including when the answer is "this window has not begun".
+    """
+    dataset = store.get_dataset(dataset_id)
+    if dataset is None:
         raise HTTPException(status_code=404, detail="No such dataset.")
-    return {"goals": store.list_goals(dataset_id)}
+
+    goals = store.list_goals(dataset_id)
+    story = dataset.get("story")
+    if not goals or not story:
+        return {"goals": goals, "progress": []}
+
+    progress: list[dict[str, Any]] = []
+    for raw in goals:
+        finding = next(
+            (
+                f
+                for f in story.get("findings", [])
+                if f.get("id") == f"goal_{raw['id']}"
+            ),
+            None,
+        )
+        if finding is None:
+            continue
+        progress.append(
+            {
+                "goal_id": raw["id"],
+                "says": finding.get("summary", ""),
+                "meaning": finding.get("meaning", ""),
+                "severity": finding.get("severity", "neutral"),
+                "facts": finding.get("facts", {}),
+            }
+        )
+
+    return {"goals": goals, "progress": progress}
 
 
 @app.post("/datasets/{dataset_id}/goals", status_code=201)

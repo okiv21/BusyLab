@@ -31,6 +31,12 @@ from .dataset import (
 )
 
 
+#: When one value of a grouping column covers more than this share of the rows,
+#: splitting by it explains nothing: the dominant slice necessarily carries most
+#: of any movement, so the "finding" is the total wearing a label.
+DOMINANT_LEVEL = 0.75
+
+
 #: A movement smaller than this is not worth a business owner's attention,
 #: however clean the statistics are. Guards against a large sample making a
 #: trivial drift "significant".
@@ -50,6 +56,51 @@ def _money(value: float) -> str:
 def _pct(value: float) -> str:
     """Magnitude only. For sentences where nearby words carry the direction."""
     return f"{abs(value) * 100:.0f}%"
+
+
+#: Dimensions the engine names itself, which read as nouns in a sentence.
+#:
+#: "concentrated in one channel" works because channel is a common noun. An
+#: auto-detected column heading is not: "concentrated in one Returned" and
+#: "concentrated in one Customer Type" are both nonsense. Those get a phrasing
+#: that survives any heading, at the cost of being slightly more formal.
+_NOUN_DIMENSIONS = frozenset(
+    {"channel", "region", "category", "payment method", "product"}
+)
+
+
+#: Frequency code to the word a person would say.
+_PERIOD_WORD = {"MS": "month", "W": "week", "D": "day"}
+
+
+def _period(freq: str) -> str:
+    """The period as a word, for sentences.
+
+    "Revenue per period fell by 551.5k" asks the reader to know what a period
+    is, when the engine already decided it was a month. Saying "month" costs
+    nothing and removes a word nobody outside analytics uses.
+    """
+    return _PERIOD_WORD.get(freq, "period")
+
+
+def _share_phrase(share: float) -> str:
+    """How much of a change one slice carried, said so it reads.
+
+    A share above 100% is arithmetically fine and reads as broken: it happens
+    when one line moved further than the total because others moved the other
+    way. "209% of the whole change" invites the reader to conclude the software
+    is wrong, so that case is described instead of quantified.
+    """
+    if abs(share) > 1.0:
+        return "more than the whole change, with other parts moving against it"
+    return f"{_pct(share)} of the whole change"
+
+
+def _dimension_phrase(label: str) -> str:
+    """Open the decomposition sentence in a way that reads for any dimension."""
+    if label.lower() in _NOUN_DIMENSIONS:
+        return f"The change is concentrated in one {label.lower()}"
+    return f"Split by {label}, the change is concentrated in one value"
 
 
 def _move(value: float) -> str:
@@ -142,32 +193,35 @@ def revenue_trend(frame: SalesFrame) -> list[Finding]:
 
     if result.significant and material:
         summary = (
-            f"Revenue is {direction} {_pct(change)} across the period, "
-            "and that movement is larger than this business's normal variation."
+            f"Revenue is {direction} {_pct(change)} over the time your data "
+            f"covers. That is a bigger move than this business's usual "
+            f"{_period(freq)}-to-{_period(freq)} ups and downs, so it is a real "
+            f"change of direction rather than a good or bad patch."
         )
         severity = Severity.URGENT if direction == "down" else Severity.GOOD
         importance = min(0.95, 0.6 + abs(change or 0) * 0.6)
         finding_type = FindingType.TREND
     elif result.significant and not material:
         summary = (
-            f"Revenue drifts slightly {direction} over the period, by too "
-            "little to change the shape of the business."
+            f"Revenue drifts slightly {direction}, but by so little that it "
+            f"does not change the shape of the business."
         )
         severity = Severity.NEUTRAL
         importance = 0.25
         finding_type = FindingType.NOISE
     elif result.worth_a_look and material:
         summary = (
-            f"Revenue leans {direction} over the period, but the movement is "
-            "not clearly outside normal variation yet."
+            f"Revenue leans {direction}, but not yet by more than this "
+            f"business moves anyway. Worth watching rather than acting on."
         )
         severity = Severity.WATCH
         importance = 0.45
         finding_type = FindingType.NOISE
     else:
         summary = (
-            "Revenue has moved around, but the ups and downs sit inside this "
-            "business's normal variation rather than forming a trend."
+            f"Revenue has moved up and down, but no more than this business "
+            f"normally does from one {_period(freq)} to the next. Nothing here "
+            f"points in a particular direction."
         )
         severity = Severity.NEUTRAL
         importance = 0.3
@@ -498,9 +552,10 @@ def revenue_decomposition(frame: SalesFrame) -> list[Finding]:
             id="revenue_decomposition",
             type=FindingType.DECOMPOSITION,
             summary=(
-                f"Revenue per period {direction} by {_money(abs(total_delta))} "
-                f"between the first and second half of the period. "
-                f"{biggest['label']} accounts for {_pct(share)} of that move."
+                f"Comparing the first half of your data with the second, an "
+                f"average {_period(freq)} {direction} by "
+                f"{_money(abs(total_delta))}. {biggest['label']} accounts "
+                f"for {_share_phrase(share)}."
             ),
             facts={
                 "direction": direction,
@@ -565,6 +620,16 @@ def dimension_decomposition(frame: SalesFrame) -> list[Finding]:
         if base <= 0 or abs(total) < base * 0.05:
             continue
 
+        # A dimension where almost every row carries the same value cannot
+        # explain anything. "Returned: No accounts for 79% of the move" is true
+        # of a column that is 95% No, and it is just the total restated with a
+        # label on it - which reads as a finding while carrying no information.
+        # The share of the move only means something when the slices are big
+        # enough to have differed.
+        shares = frame.data[column].value_counts(normalize=True)
+        if not shares.empty and float(shares.iloc[0]) > DOMINANT_LEVEL:
+            continue
+
         moves = delta.sort_values()
         biggest = moves.index[0] if total < 0 else moves.index[-1]
         biggest_change = float(moves.loc[biggest])
@@ -591,9 +656,10 @@ def dimension_decomposition(frame: SalesFrame) -> list[Finding]:
                 id=f"decomposition_{column}",
                 type=FindingType.DECOMPOSITION,
                 summary=(
-                    f"The change is concentrated in one {label}: {biggest} "
-                    f"{direction} by {_money(abs(biggest_change))} per period, "
-                    f"which is {_pct(share)} of the total move.{tail}"
+                    f"{_dimension_phrase(label)}: {biggest} "
+                    f"{direction} by {_money(abs(biggest_change))} in an "
+                    f"average {_period(freq)}, which is "
+                    f"{_share_phrase(share)}.{tail}"
                 ),
                 facts={
                     "dimension": label,
@@ -662,6 +728,11 @@ def price_volume_split(frame: SalesFrame) -> list[Finding]:
     price_effect = (p1 - p0) * q1
 
     dominant = "volume" if abs(volume_effect) >= abs(price_effect) else "price"
+    # Within this margin the two effects are the same size, and calling either
+    # one "mostly" responsible misreads a tie as a finding.
+    _q_pct = stats.safe_pct_change(q1, q0) or 0.0
+    _p_pct = stats.safe_pct_change(p1, p0) or 0.0
+    balanced = round(abs(_q_pct) * 100) == round(abs(_p_pct) * 100)
     wording = (
         "fewer units rather than lower prices"
         if dominant == "volume" and total_change < 0
@@ -677,7 +748,12 @@ def price_volume_split(frame: SalesFrame) -> list[Finding]:
             id="price_volume_split",
             type=FindingType.DECOMPOSITION,
             summary=(
-                f"The revenue change is mostly {wording}: "
+                (
+                    "The revenue change splits about evenly between how much "
+                    "was sold and what it sold for: "
+                )
+                if balanced
+                else f"The revenue change is mostly {wording}: "
                 f"units {_move(stats.safe_pct_change(q1, q0) or 0)} while "
                 f"average price {_move(stats.safe_pct_change(p1, p0) or 0)}."
             ),

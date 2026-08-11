@@ -160,11 +160,28 @@ def test_conflicting_column_is_raised_not_guessed() -> None:
     assert any(p.column == "date" for p in result.prompts)
 
 
-def test_unknown_categorical_is_offered_as_a_grouping() -> None:
-    """Spec 3.3's middle path, rather than silently ignoring the column."""
+def test_unknown_categorical_is_used_as_a_grouping() -> None:
+    """Spec 3.3's middle path, taken automatically rather than by asking.
+
+    The spec offers such a column to the user as a possible grouping. In
+    practice that turned out to be the wrong end of the trade: a restaurant
+    export whose two most interesting columns were Daypart and Staff produced
+    two questions, could not be analysed until they were answered, and gave
+    nothing extra once they were. The column is now taken as a dimension
+    directly.
+
+    Nothing is claimed about what it means - only that it can be grouped by,
+    which is all the analyses need - and a user override still wins outright,
+    so control is retained without the interruption.
+    """
     result = detect(fixtures.messy_frame())
-    prompt = next(p for p in result.prompts if p.column == "salesperson")
-    assert prompt.allow_group_by
+    verdict = next(v for v in result.verdicts if v.column == "salesperson")
+    assert verdict.role is Role.GROUP_BY
+    assert verdict.status == "dimension"
+    # The point of the middle path: not silently dropped.
+    assert "salesperson" not in result.unknown_columns
+    # And not turned into a question, which is what changed.
+    assert not any(p.column == "salesperson" for p in result.prompts)
 
 
 def test_user_effort_scales_with_their_own_mess() -> None:
@@ -338,3 +355,152 @@ def test_clean_workbook_round_trips_with_no_questions(tmp_path) -> None:
     assert report.dropped_total_rows == 0
     assert result.prompts == []
     assert result.ready
+
+
+class TestExtraDimensions:
+    """Columns outside the thirteen roles, kept as things to group by.
+
+    Real exports carry their most interesting columns here: Daypart, Staff,
+    Size, Sales Rep, Customer Type, Returned. Before this they were discarded,
+    so the questions a reader would actually ask of a restaurant file - are
+    dinner tickets bigger, does one server's average differ - were not even
+    attempted.
+    """
+
+    def _detect(self, **columns):
+        import numpy as np
+
+        rng = np.random.default_rng(3)
+        n = 240
+        base = {
+            "Order Date": pd.date_range("2025-01-01", periods=n, freq="D"),
+            "Item": rng.choice(["Rice", "Beans", "Stew"], n),
+            "Qty": rng.integers(1, 5, n),
+            "Unit Price": rng.uniform(500, 4000, n).round(2),
+        }
+        base.update(columns)
+        return detect(pd.DataFrame(base))
+
+    def _role_of(self, result, column):
+        return next(v.role for v in result.verdicts if v.column == column)
+
+    def test_a_label_column_becomes_a_dimension(self):
+        import numpy as np
+
+        rng = np.random.default_rng(4)
+        result = self._detect(Daypart=rng.choice(["Lunch", "Dinner"], 240))
+        assert self._role_of(result, "Daypart") is Role.GROUP_BY
+
+    def test_a_single_valued_column_is_not_a_dimension(self):
+        # One group is one bar, which says nothing.
+        result = self._detect(Branch=["Main"] * 240)
+        assert self._role_of(result, "Branch") is not Role.GROUP_BY
+
+    def test_a_column_of_unique_values_is_not_a_dimension(self):
+        # That is an identifier or free text, not a grouping.
+        result = self._detect(Note=[f"note {i}" for i in range(240)])
+        assert self._role_of(result, "Note") is not Role.GROUP_BY
+
+    def test_a_numeric_column_is_not_a_dimension(self):
+        import numpy as np
+
+        rng = np.random.default_rng(5)
+        # Repeats, but it is a measurement. Grouping by it would be wrong.
+        result = self._detect(Weight=rng.choice([1.5, 2.0, 2.5], 240))
+        assert self._role_of(result, "Weight") is not Role.GROUP_BY
+
+    def test_a_named_role_still_wins_over_the_dimension_fallback(self):
+        import numpy as np
+
+        rng = np.random.default_rng(6)
+        result = self._detect(Channel=rng.choice(["Online", "In store"], 240))
+        assert result.assignments.get(Role.CHANNEL) == "Channel"
+
+    def test_a_vetoed_soft_role_is_repurposed(self):
+        # "Customer" holding New and Returning is not a customer id, and there
+        # is nothing to warn about - it is a useful way to split the business.
+        import numpy as np
+
+        rng = np.random.default_rng(7)
+        result = self._detect(Customer=rng.choice(["New", "Returning"], 240))
+        assert self._role_of(result, "Customer") is Role.GROUP_BY
+
+    def test_a_vetoed_critical_role_is_still_raised(self):
+        # A column called "date" holding places might mean the dates are
+        # elsewhere or that the file is broken. Either way the owner needs to
+        # know, and demoting it to a grouping would hide that behind a chart.
+        import numpy as np
+
+        rng = np.random.default_rng(8)
+        result = self._detect(**{"sale date": rng.choice(["Lagos", "Abuja"], 240)})
+        verdict = next(v for v in result.verdicts if v.column == "sale date")
+        assert verdict.role is not Role.GROUP_BY
+        assert verdict.status == "conflict"
+
+    def test_dimensions_reach_the_frame(self):
+        import numpy as np
+
+        from busylab.analysis.dataset import build
+
+        rng = np.random.default_rng(9)
+        frame_in = pd.DataFrame(
+            {
+                "Order Date": pd.date_range("2025-01-01", periods=240, freq="D"),
+                "Item": rng.choice(["Rice", "Beans"], 240),
+                "Qty": rng.integers(1, 5, 240),
+                "Unit Price": rng.uniform(500, 4000, 240).round(2),
+                "Daypart": rng.choice(["Lunch", "Dinner"], 240),
+            }
+        )
+        frame = build(frame_in, detect(frame_in))
+        assert any("Daypart" in label for label in frame.dimensions.values())
+
+
+class TestLabelFolding:
+    """Spelling variants of one label must not become separate groups.
+
+    A hand-kept sheet carries "catering", "Catering" and "CATERING". Grouping on
+    the raw strings splits a channel's rows three ways, computes its average
+    from a third of the data, and then reports one spelling as vastly
+    outperforming another spelling of the same thing.
+    """
+
+    def _frame(self, values):
+        import numpy as np
+
+        from busylab.analysis.dataset import build
+
+        rng = np.random.default_rng(11)
+        n = len(values)
+        raw = pd.DataFrame(
+            {
+                "Order Date": pd.date_range("2025-01-01", periods=n, freq="D"),
+                "Item": rng.choice(["Rice", "Beans"], n),
+                "Qty": rng.integers(1, 5, n),
+                "Unit Price": rng.uniform(500, 4000, n).round(2),
+                "Channel": values,
+            }
+        )
+        return build(raw, detect(raw))
+
+    def test_case_variants_fold_together(self):
+        frame = self._frame(["catering", "Catering", "CATERING"] * 80)
+        assert frame.data["channel"].nunique() == 1
+
+    def test_the_commonest_spelling_survives(self):
+        # The reader should see their own data back, not a lowercased version.
+        frame = self._frame(["Catering"] * 200 + ["CATERING"] * 40)
+        assert frame.data["channel"].unique().tolist() == ["Catering"]
+
+    def test_separator_style_folds(self):
+        frame = self._frame(["Dine-in", "dine in", "DINE_IN"] * 80)
+        assert frame.data["channel"].nunique() == 1
+
+    def test_genuinely_different_labels_stay_separate(self):
+        frame = self._frame(["Online", "In store", "Wholesale"] * 80)
+        assert frame.data["channel"].nunique() == 3
+
+    def test_row_count_is_preserved(self):
+        # Folding relabels; it must never drop or duplicate a row.
+        frame = self._frame(["catering", "Catering", "CATERING"] * 80)
+        assert len(frame.data) == 240
