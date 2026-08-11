@@ -271,18 +271,109 @@ def _invented_entities(text: str, findings: list[Finding], cited: list[Finding])
     suspects: list[str] = []
     # Capitalised runs of two or more words: "Gift Box", "Ceramic Diffuser".
     for match in re.finditer(r"\b([A-Z][a-z0-9]+(?: [A-Z][a-z0-9]+)+)\b", text):
-        phrase = match.group(1)
-        if phrase.lower() in known:
+        phrase = match.group(1).lower()
+        # Containment either way, not equality. A model that writes "Senator
+        # Set" about a product recorded as "Senator Set (Men)" has named the
+        # right thing; rejecting that shortening threw away good answers and
+        # accused the model of inventing a product it had read correctly.
+        if any(phrase in name or name in phrase for name in known):
             continue
-        # Ignore phrases made only of common words, which are prose not labels.
-        suspects.append(phrase)
+        suspects.append(match.group(1))
     return suspects
+
+
+#: Words that carry no subject on their own, so their absence from the data
+#: means nothing.
+_NOT_A_SUBJECT = frozenset(
+    {
+        "the", "a", "an", "and", "or", "but", "if", "of", "in", "on", "at",
+        "to", "for", "from", "by", "with", "about", "into", "over", "than",
+        "this", "that", "these", "those", "it", "its", "my", "our", "your",
+        "me", "we", "us", "you", "is", "are", "was", "were", "be", "been",
+        "do", "does", "did", "doing", "done", "have", "has", "had", "can",
+        "could", "should", "would", "will", "shall", "may", "might", "must",
+        "what", "why", "how", "when", "where", "which", "who", "whom",
+        "not", "any", "all", "some", "more", "most", "less", "least",
+        "much", "many", "very", "just", "only", "also", "still", "yet",
+        "out", "off", "again", "then", "there", "here", "now", "way",
+        "good", "bad", "well", "better", "worse", "best", "worst", "high",
+        "low", "big", "small", "growing", "falling", "rising",
+        # The product's own vocabulary, which is never an entity in the data.
+        "revenue", "sales", "sale", "profit", "margin", "cost", "costs",
+        "price", "prices", "units", "unit", "orders", "order", "customer",
+        "customers", "product", "products", "month", "months", "week", "weeks",
+        "year", "years", "period", "periods", "data", "file", "business",
+        "money", "total", "average", "trend", "change", "changes", "channel",
+        "channels", "region", "regions", "category", "categories", "target",
+        "compared", "comparison", "understand", "explain", "findings",
+        "finding", "tell", "show", "mean", "means", "happening", "happened",
+        "doing", "going", "look", "looks", "since", "last", "first", "next",
+    }
+)
+
+
+def unknown_subjects(question: str, findings: list[Finding]) -> list[str]:
+    """Words in the question naming something the data does not contain.
+
+    The failure this exists for: asked "how are candles doing in Lagos", a model
+    holding a clothing shop's findings answered "candles may be doing steadily
+    in Lagos, as Lagos appears to have held roughly steady". Every word of that
+    is true and there are no candles in the file.
+
+    None of the other checks catch it. The number guard passes because no number
+    is wrong; the causal guard passes because nothing is claimed to cause
+    anything; the entity guard passes because it only inspects capitalised runs
+    and "candles" is lowercase. The sentence asserts nothing false - it simply
+    lets the question's premise stand, which is the residual risk this design
+    always had.
+
+    So the question is checked too. Anything named here is told to the model as
+    absent, and the answer is then required to say so.
+    """
+    known = entity_names(findings)
+    haystack = " ".join(known)
+    missing: list[str] = []
+    for word in re.findall(r"[A-Za-z][A-Za-z'-]{2,}", question):
+        lowered = word.lower()
+        if lowered in _NOT_A_SUBJECT or lowered in missing:
+            continue
+        # Singular and plural both count as present.
+        stem = lowered[:-1] if lowered.endswith("s") else lowered
+        if lowered in haystack or (len(stem) >= 3 and stem in haystack):
+            continue
+        missing.append(lowered)
+    return missing
+
+
+#: Ways of saying "that is not in here". One of these must appear when the
+#: question named something the data does not contain.
+_ABSENCE = (
+    "not in",
+    "no ",
+    "does not",
+    "doesn't",
+    "cannot",
+    "can't",
+    "nothing",
+    "not appear",
+    "not recorded",
+    "not covered",
+    "not something",
+    "no record",
+    "not present",
+    "not include",
+    "isn't",
+    "is not",
+    "unable",
+)
 
 
 def verify_answer(
     text: str,
     findings: list[Finding],
     cited_ids: list[str],
+    *,
+    absent: list[str] | None = None,
 ) -> list[str]:
     """Reasons this answer may not be shown. Empty means it is safe.
 
@@ -325,6 +416,18 @@ def verify_answer(
         problems.append(
             "states an uncertain finding as fact, with no hedge"
         )
+
+    if absent:
+        # The question named something the file does not contain. An answer
+        # that neither mentions nor denies it lets the premise stand, which is
+        # how "candles may be doing steadily in Lagos" came out of a clothing
+        # shop's data without a single false statement in it.
+        lowered = text.lower()
+        if not any(phrase in lowered for phrase in _ABSENCE):
+            problems.append(
+                f"the question asked about {', '.join(absent)}, which is not in "
+                f"this data, and the answer does not say so"
+            )
 
     problems.extend(check_non_directive(text))
 
@@ -440,7 +543,9 @@ Reply with JSON only:
 discarded."""
 
 
-def _build_prompt(question: str, findings: list[Finding]) -> str:
+def _build_prompt(
+    question: str, findings: list[Finding], absent: list[str] | None = None
+) -> str:
     payload = [
         {
             "id": f.id,
@@ -452,8 +557,15 @@ def _build_prompt(question: str, findings: list[Finding]) -> str:
         }
         for f in findings
     ]
+    warning = ""
+    if absent:
+        warning = (
+            f"\nIMPORTANT: this data contains nothing called "
+            f"{', '.join(absent)}. Say so plainly instead of answering as "
+            f"though it were there.\n"
+        )
     return (
-        f'Question: "{question}"\n\n'
+        f'Question: "{question}"\n{warning}\n'
         f"Findings available:\n{json.dumps(payload, default=str, indent=2)}\n\n"
         "Answer the question from these findings."
     )
@@ -473,6 +585,12 @@ def answer_question(
     summary on any failure means this feature cannot perform worse than the
     routing it replaces.
     """
+    # Worked out first, because every fallback path reads it. Computing it
+    # lower down left the early returns reading a name that did not exist yet.
+    absent = unknown_subjects(question, findings) if question.strip() else []
+    if absent:
+        log.info("question names %s, absent from the data", absent)
+
     def _fell_back(reasons: list[str]) -> Answer:
         # Advice is attached here rather than at the end, because several
         # failures return early - unparseable JSON, a missing brace - and those
@@ -491,6 +609,19 @@ def answer_question(
                 f"I could not answer that directly from this data. The closest "
                 f"thing already calculated is: {fallback.summary}",
                 [fallback.id],
+                "engine",
+                reasons,
+            )
+        if absent:
+            # Name what is missing. "That is not something this data can
+            # answer" is true and unhelpful; the reader asked about candles and
+            # deserves to be told there are none, rather than left wondering
+            # whether the question was understood.
+            missing = ", ".join(absent)
+            return Answer(
+                f"There is nothing about {missing} in this data, so there is "
+                f"nothing to report on it.",
+                [],
                 "engine",
                 reasons,
             )
@@ -516,7 +647,7 @@ def answer_question(
     try:
         raw = provider.complete(
             SYSTEM_PROMPT,
-            _build_prompt(question, findings),
+            _build_prompt(question, findings, absent),
             max_tokens=300,
             temperature=0.0,  # this is retrieval and wording, not invention
         )
@@ -547,7 +678,7 @@ def answer_question(
         log.info("model cited unknown findings: %s", unknown)
     cited_ids = [i for i in cited_ids if i in known]
 
-    problems = verify_answer(text, findings, cited_ids)
+    problems = verify_answer(text, findings, cited_ids, absent=absent)
     if problems:
         log.warning("rejected answer for %r: %s", question[:60], problems[0])
         return _fell_back(problems)

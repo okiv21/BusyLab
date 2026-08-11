@@ -28,6 +28,10 @@ log = logging.getLogger(__name__)
 #: OpenAI-compatible, so swapping providers is configuration rather than code.
 GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
 
+#: Sent on every request. See the note in ``complete``: without a User-Agent,
+#: Cloudflare blocks the call before Groq ever sees it.
+USER_AGENT = "busylab/0.1 (+https://github.com/okiv21/BusyLab)"
+
 #: Prose quality matters here and the calls are cached, so volume stays low.
 DEFAULT_NARRATION_MODEL = "llama-3.3-70b-versatile"
 #: Routing is classification and sits in an interactive path, so latency wins.
@@ -125,6 +129,15 @@ class GroqProvider:
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
+                # Not optional, and not cosmetic. Groq sits behind Cloudflare,
+                # which rejects urllib's default "Python-urllib/3.x" agent with
+                # a 403 and the body "error code: 1010". Every model call failed
+                # that way - narration, routing and answering alike - and
+                # because each of those falls back to the engine's own wording
+                # when the provider errors, the whole language layer was dead
+                # with nothing on screen to say so. The identical request with
+                # this header set returns 200.
+                "User-Agent": USER_AGENT,
             },
             method="POST",
         )
@@ -136,7 +149,18 @@ class GroqProvider:
                     body = json.loads(response.read().decode("utf-8"))
                 return body["choices"][0]["message"]["content"].strip()
             except urllib.error.HTTPError as exc:
-                last_error = exc
+                # Read the body. The status alone said "403 Forbidden", which
+                # reads as a rejected key; the body said "error code: 1010",
+                # which is Cloudflare refusing the client. Those call for
+                # opposite fixes, and discarding the body cost a long time
+                # spent doubting a perfectly good API key.
+                try:
+                    detail = exc.read().decode("utf-8", "replace").strip()[:200]
+                except Exception:
+                    detail = ""
+                last_error = RuntimeError(
+                    f"{exc.code} {exc.reason}{f' - {detail}' if detail else ''}"
+                )
                 # 429 is the free tier working as intended, not a failure.
                 if exc.code == 429 and attempt < self.max_retries:
                     wait = float(exc.headers.get("retry-after", 2 * (attempt + 1)))
@@ -160,6 +184,15 @@ def load_dotenv(start: str | os.PathLike[str] | None = None) -> bool:
     Real environment variables always win, so a value exported in the shell or
     set by the host is never silently overridden by a stale file. Searches the
     working directory and its parents so it works from anywhere in the repo.
+
+    Within the file, a later line wins. That ordering matters more than it
+    looks: appending to the bottom of a .env is how a value actually gets added,
+    and this function previously applied each line only when the name was not
+    already set - which, since it had just set it from an earlier line, meant
+    the *first* occurrence won. A file with an empty ``GROQ_API_KEY=`` near the
+    top and a real key at the bottom therefore loaded the empty one, and the
+    model silently stayed switched off with the key sitting right there in the
+    file. A duplicate is logged, because the losing line is invisible otherwise.
     """
     from pathlib import Path
 
@@ -168,14 +201,22 @@ def load_dotenv(start: str | os.PathLike[str] | None = None) -> bool:
         candidate = directory / ".env"
         if not candidate.is_file():
             continue
+
+        values: dict[str, str] = {}
         for line in candidate.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, _, value = line.partition("=")
             key = key.strip()
-            value = value.strip().strip("'\"")
-            if key and key not in os.environ:
+            if not key:
+                continue
+            if key in values:
+                log.info("%s is set more than once in .env; using the last one", key)
+            values[key] = value.strip().strip("'\"")
+
+        for key, value in values.items():
+            if key not in os.environ:
                 os.environ[key] = value
         return True
     return False
