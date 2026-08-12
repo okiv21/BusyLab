@@ -60,6 +60,11 @@ class Series:
     labels: list[str]
     values: list[float]
     title: str = ""
+    #: True when the values are signed contributions either side of zero, so up
+    #: and down have to read as opposite rather than as one colour of bar. A
+    #: ranking is not diverging: every bar is positive and colouring them by
+    #: value would double-encode length as hue.
+    diverging: bool = False
 
 
 def _severity_colour(severity: Severity) -> tuple[int, int, int]:
@@ -140,12 +145,23 @@ def series_for(finding: Finding) -> Series | None:
             )
 
     if chart is ChartType.WATERFALL:
-        steps = data.get("steps") or []
+        steps = [s for s in (data.get("steps") or []) if float(s.get("change", 0))]
         if steps:
+            # Sorted by size before truncating, which the export was not doing.
+            # The payload arrives sorted ascending by change, so taking the
+            # first eight kept the five largest falls and dropped the two
+            # largest rises entirely: on a real file that turned "one product
+            # fell further than the whole change while others rose" into a page
+            # where every bar pointed the same way. The chart disagreed with the
+            # sentence printed directly above it.
+            steps = sorted(
+                steps, key=lambda s: abs(float(s.get("change", 0))), reverse=True
+            )[:7]
             return Series(
                 "bar",
-                [str(s.get("label", "")) for s in steps][:8],
-                [float(s.get("change", 0)) for s in steps][:8],
+                [str(s.get("label", "")) for s in steps],
+                [float(s.get("change", 0)) for s in steps],
+                diverging=True,
             )
 
     return None
@@ -354,7 +370,18 @@ def _draw_chart(pdf, series: Series, x: float, y: float, width: float, height: f
             value = values[i]
             py = y - height + (min(value, 0) - bottom) / span * height
             bar_height = abs(value) / span * height
-            pdf.setFillColor(rgb(ACCENT if value >= 0 else WARN, 0.9))
+            # Green up against orange down only where the values are signed.
+            # The previous pair was accent against warn, both warm and the
+            # falling one duller, so a rise and a fall read as the same bar in
+            # two shades. On a ranking, where every value is positive, one
+            # colour is correct: colouring by value would encode bar length
+            # twice and say nothing new.
+            if series.diverging:
+                fill = GOOD if value >= 0 else ACCENT
+            else:
+                fill = ACCENT
+            centre = x + i * slot + slot / 2
+            pdf.setFillColor(rgb(fill, 0.9))
             pdf.rect(
                 x + i * slot + (slot - bar_width) / 2,
                 py,
@@ -363,12 +390,28 @@ def _draw_chart(pdf, series: Series, x: float, y: float, width: float, height: f
                 fill=1,
                 stroke=0,
             )
+
+            if series.diverging:
+                # The figure, because a small bar cannot be read off the axis
+                # and the reader has no tooltip on paper.
+                pdf.setFillColor(rgb(ACCENT_DARK if value < 0 else GOOD))
+                pdf.setFont("Helvetica-Bold", 6.5)
+                above = value >= 0
+                pdf.drawCentredString(
+                    centre,
+                    (py + bar_height + 3) if above else (py - 8),
+                    # A plain hyphen, not a typographic minus. The base PDF
+                    # fonts encode WinAnsi, which has no U+2212, so reportlab
+                    # splits the string and draws the sign from a fallback font
+                    # as a separately positioned run. On paper the difference is
+                    # invisible; the fragility is not worth it.
+                    f"{'+' if above else '-'}{_compact(abs(value))}",
+                )
+
             pdf.setFillColor(rgb(INK_LIGHT))
             pdf.setFont("Helvetica", 6.5)
             label = series.labels[i] if i < len(series.labels) else ""
-            pdf.drawCentredString(
-                x + i * slot + slot / 2, y - height - 9, label[:14]
-            )
+            pdf.drawCentredString(centre, y - height - 9, label[:14])
 
     pdf.setStrokeColor(rgb(LINE))
     pdf.setLineWidth(0.6)

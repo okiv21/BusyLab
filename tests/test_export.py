@@ -295,3 +295,126 @@ def test_a_held_analysis_cannot_be_exported(client, tmp_path) -> None:
 
 def test_exports_on_a_missing_dataset_are_a_404(client) -> None:
     assert client.get("/datasets/nope/export.pdf").status_code == 404
+
+
+class TestDecompositionChartInExports:
+    """The exported chart has to agree with the sentence printed above it.
+
+    It did not. The payload arrives sorted ascending by change, and the export
+    took the first eight steps, so on a real file it kept the five largest falls
+    and dropped the two largest rises entirely. A page whose heading read "one
+    product fell further than the whole change, with other parts moving against
+    it" showed bars that all pointed the same way.
+    """
+
+    def _finding(self, changes: dict[str, float]) -> Finding:
+        return Finding(
+            id="revenue_decomposition",
+            type=FindingType.DECOMPOSITION,
+            summary="s",
+            facts={},
+            chart_data={
+                "start": {"label": "Earlier", "value": 1000.0},
+                "end": {"label": "Later", "value": 900.0},
+                # Ascending by change, which is how the engine emits it.
+                "steps": [
+                    {"label": k, "change": v}
+                    for k, v in sorted(changes.items(), key=lambda kv: kv[1])
+                ],
+            },
+        )
+
+    def test_the_biggest_riser_is_not_dropped(self):
+        finding = self._finding(
+            {
+                "Milo": -1_870_000,
+                "PowerOil": -573_000,
+                "Nescafe": -283_500,
+                "BigiCola": -132_700,
+                "CocaCola": -109_750,
+                "PeakMilk": 50_900,
+                "Hollandia": 79_900,
+                "Indomie": 92_800,
+                "Kabo": 956_600,
+                "Dangote": 560_000,
+            }
+        )
+        series = series_for(finding)
+        assert "Kabo" in series.labels
+        assert "Dangote" in series.labels
+
+    def test_steps_are_ordered_by_size(self):
+        series = series_for(
+            self._finding({"small": 10.0, "huge": -900.0, "middling": 300.0})
+        )
+        assert series.labels == ["huge", "middling", "small"]
+
+    def test_both_directions_survive(self):
+        series = series_for(self._finding({"up": 500.0, "down": -400.0}))
+        assert any(v > 0 for v in series.values)
+        assert any(v < 0 for v in series.values)
+
+    def test_the_chart_is_marked_diverging(self):
+        # Which is what earns it two colours. A rise and a fall were previously
+        # drawn in two warm shades, the falling one duller, so they read as the
+        # same bar rather than as opposites.
+        assert series_for(self._finding({"up": 1.0, "down": -1.0})).diverging
+
+    def test_a_ranking_is_not_diverging(self):
+        # Every bar is positive, so one colour is correct. Colouring by value
+        # would encode bar length twice and add nothing.
+        ranking = Finding(
+            id="product_ranking",
+            type=FindingType.RANKING,
+            summary="s",
+            chart_data={
+                "bars": [{"label": "a", "value": 30.0}, {"label": "b", "value": 10.0}]
+            },
+        )
+        series = series_for(ranking)
+        assert series is not None
+        assert not series.diverging
+
+    def test_unmoved_steps_are_left_out(self):
+        series = series_for(
+            self._finding({"moved": 100.0, "flat": 0.0, "alsomoved": -80.0})
+        )
+        assert "flat" not in series.labels
+
+    def test_the_chart_is_capped(self):
+        series = series_for(self._finding({f"p{i}": float(i + 1) for i in range(20)}))
+        assert len(series.labels) <= 7
+
+    def test_the_pdf_draws_both_colours_and_signed_values(self):
+        """Checked in the PDF itself, since that is where it was wrong."""
+        import base64
+        import re
+        import zlib
+
+        raw = to_pdf([self._finding({"up": 500.0, "down": -400.0})])
+        chunks = []
+        for m in re.finditer(rb"stream(.*?)endstream", raw, re.S):
+            body = m.group(1).strip(b"\r\n")
+            for attempt in (
+                lambda b: zlib.decompress(base64.a85decode(b, adobe=False)),
+                lambda b: zlib.decompress(
+                    base64.a85decode(b.rstrip(b"~>"), adobe=False)
+                ),
+                lambda b: zlib.decompress(b),
+            ):
+                try:
+                    chunks.append(attempt(body).decode("latin-1"))
+                    break
+                except Exception:
+                    continue
+        content = "\n".join(chunks)
+
+        # reportlab writes colours without a leading zero.
+        assert ".121569 .662745 .478431 rg" in content, "no green bar for the rise"
+        assert ".909804 .352941 .196078 rg" in content, "no orange bar for the fall"
+
+        drawn = re.findall(r"\(([^)]*)\)\s*Tj", content)
+        # Single runs, not a sign split off into its own text object: the base
+        # fonts encode WinAnsi, which has no typographic minus.
+        assert any(d.startswith("+") and any(c.isdigit() for c in d) for d in drawn)
+        assert any(d.startswith("-") and any(c.isdigit() for c in d) for d in drawn)
