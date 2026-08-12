@@ -108,6 +108,14 @@ export function getStory(datasetId: string) {
   return request<Story>(`/datasets/${datasetId}/story`);
 }
 
+export function setDigestRecipient(datasetId: string, email: string) {
+  return request<void>(`/datasets/${datasetId}/recipient`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+}
+
 export function sendDigest(datasetId: string) {
   return request<{ sent: boolean; detail: string; recipient: string }>(
     `/datasets/${datasetId}/digest/send`,

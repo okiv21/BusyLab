@@ -32,6 +32,15 @@ GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
 #: Cloudflare blocks the call before Groq ever sees it.
 USER_AGENT = "busylab/0.1 (+https://github.com/okiv21/BusyLab)"
 
+#: OpenRouter, which fronts many providers behind the same OpenAI-compatible
+#: shape. Useful here for reaching a stronger open-weight model than a single
+#: free tier offers, without another dependency or another code path.
+OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+
+#: A capable open-weight default. Overridden with BUSYLAB_LLM_MODEL, which is
+#: the point of routing through OpenRouter at all.
+DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-chat"
+
 #: Prose quality matters here and the calls are cached, so volume stays low.
 DEFAULT_NARRATION_MODEL = "llama-3.3-70b-versatile"
 #: Routing is classification and sits in an interactive path, so latency wins.
@@ -82,11 +91,16 @@ class NullProvider:
 
 @dataclass
 class GroqProvider:
-    """Groq's free tier, via its OpenAI-compatible endpoint.
+    """Any OpenAI-compatible chat endpoint. Groq by default, OpenRouter on ask.
 
-    The free tier's binding constraint is tokens per minute rather than
-    requests per minute, so callers should send one small payload at a time
-    and cache the result rather than batching everything into one large call.
+    Named for its first target and kept that way because the name is referenced
+    across the tests; the endpoint, model and reported name are all parameters,
+    so the same class reaches either service. That is the whole benefit of the
+    OpenAI-compatible shape: a different provider is configuration, not code.
+
+    On a free tier the binding constraint is tokens per minute rather than
+    requests per minute, so callers should send one small payload at a time and
+    cache the result rather than batching everything into one large call.
     """
 
     api_key: str = field(default_factory=lambda: os.environ.get("GROQ_API_KEY", ""))
@@ -227,14 +241,47 @@ def from_env(*, model: str | None = None) -> Provider:
 
     Returns :class:`NullProvider` when nothing is configured, so importing this
     module never makes the engine depend on a network call.
+
+    Both backends speak the same OpenAI-compatible shape, so choosing between
+    them is configuration rather than a second implementation. OpenRouter wins
+    when both keys are present, on the assumption that someone who set it up did
+    so to get off the free tier.
     """
     load_dotenv()
-    choice = os.environ.get("BUSYLAB_LLM_PROVIDER", "auto").lower()
-    key = os.environ.get("GROQ_API_KEY", "")
-    chosen_model = model or os.environ.get("BUSYLAB_LLM_MODEL") or DEFAULT_NARRATION_MODEL
+    # An empty value means "not set", not "some unknown provider". Left as-is
+    # it matched no branch and quietly returned NullProvider, so a .env line
+    # reading BUSYLAB_LLM_PROVIDER= switched the model off with a key present.
+    choice = (os.environ.get("BUSYLAB_LLM_PROVIDER") or "auto").strip().lower() or "auto"
+    groq_key = os.environ.get("GROQ_API_KEY", "")
+    router_key = os.environ.get("OPENROUTER_API_KEY", "")
+    wanted = model or os.environ.get("BUSYLAB_LLM_MODEL") or ""
 
     if choice in {"none", "off", "null"}:
         return NullProvider()
-    if choice in {"groq", "auto"} and key:
-        return GroqProvider(api_key=key, model=chosen_model)
+
+    if choice in {"openrouter", "router"} or (choice == "auto" and router_key):
+        if router_key:
+            # OpenRouter model ids are always "vendor/model". A bare name is a
+            # Groq id left behind in .env from before the switch, and sending it
+            # gets a 404 for a model that plainly exists somewhere - so it is
+            # ignored with a line saying which name was used instead.
+            if wanted and "/" not in wanted:
+                log.warning(
+                    "BUSYLAB_LLM_MODEL=%r is not an OpenRouter id, which look "
+                    "like vendor/model. Using %s instead.",
+                    wanted,
+                    DEFAULT_OPENROUTER_MODEL,
+                )
+                wanted = ""
+            return GroqProvider(
+                api_key=router_key,
+                model=wanted or DEFAULT_OPENROUTER_MODEL,
+                endpoint=os.environ.get("BUSYLAB_LLM_ENDPOINT") or OPENROUTER_ENDPOINT,
+                name="openrouter",
+            )
+
+    if choice in {"groq", "auto"} and groq_key:
+        return GroqProvider(
+            api_key=groq_key, model=wanted or DEFAULT_NARRATION_MODEL
+        )
     return NullProvider()

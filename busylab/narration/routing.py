@@ -179,25 +179,21 @@ def available_routes(
     chips, so availability is computed from what was actually produced.
     """
     columns = columns or set()
-    found = {f.id for f in findings}
 
-    out: list[Route] = []
-    for route in ROUTES:
-        if not route.requires_columns and not route.requires_findings:
-            out.append(route)
-            continue
-
-        # Either kind of evidence is enough. A finding that already exists
-        # proves the capability just as well as the raw column does, and
-        # requiring both would silently drop answerable questions whenever a
-        # caller did not happen to pass the column set.
-        by_column = bool(route.requires_columns) and set(route.requires_columns) <= columns
-        by_finding = bool(route.requires_findings) and bool(
-            set(route.requires_findings) & found
-        )
-        if by_column or by_finding:
-            out.append(route)
-    return out
+    # A route is offered only when a finding exists that answers it.
+    #
+    # This used to accept either the required column or the required finding, on
+    # the reasoning that a column proves the capability. It does not. The column
+    # proves the analysis *could* run; whether it produced anything is a
+    # separate question, and the answer lookup needs the finding. So a file with
+    # a region column but no surviving region finding offered "Break down by
+    # location" and then answered "that is not something this data can answer" -
+    # the product contradicting itself in two clicks.
+    #
+    # Made likelier by suppressing segmentations whose groups sell a different
+    # product mix: those comparisons are not like-for-like, so they are no
+    # longer reported, which removes findings that chips were counting on.
+    return [route for route in ROUTES if finding_for(route, findings) is not None]
 
 
 def suggest_chips(
@@ -333,7 +329,12 @@ def answer_from_findings(decision: RoutingDecision, findings: list[Finding]) -> 
     """
     if decision.route is None:
         return None
-    wanted = set(decision.route.requires_findings)
+    return finding_for(decision.route, findings)
+
+
+def finding_for(route: Route, findings: list[Finding]) -> Finding | None:
+    """The finding that answers this route, or None if nothing does."""
+    wanted = set(route.requires_findings)
     for finding in findings:
         if finding.id in wanted:
             return finding
@@ -350,8 +351,12 @@ def answer_from_findings(decision: RoutingDecision, findings: list[Finding]) -> 
         "what_sells_together": ("product_relationships",),
         "why_change": ("revenue_decomposition", "decomposition_channel"),
         "price_or_volume": ("price_volume_split",),
+        # Without this the forecast chip was offered on every file and answered
+        # on none of them, because it declares no required finding id.
+        "whats_coming": ("forecast", "break_even"),
+        "which_customers": ("repeat_vs_new", "rfm_segments", "cohort_retention"),
     }
-    for candidate in by_route.get(decision.route.name, ()):
+    for candidate in by_route.get(route.name, ()):
         for finding in findings:
             if finding.id == candidate:
                 return finding

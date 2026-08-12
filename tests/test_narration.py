@@ -475,3 +475,102 @@ class TestProviderReachesTheModel:
         message = str(caught.value)
         assert "403" in message
         assert "1010" in message
+
+
+class TestProviderChoice:
+    """Groq or OpenRouter, chosen by configuration rather than by a code path.
+
+    Both speak the same OpenAI-compatible shape, so one class reaches either.
+    OpenRouter wins when both keys are present, on the assumption that anyone
+    who set it up did so to get off a free tier.
+    """
+
+    def _env(self, monkeypatch, **values):
+        for name in (
+            "GROQ_API_KEY",
+            "OPENROUTER_API_KEY",
+            "BUSYLAB_LLM_PROVIDER",
+            "BUSYLAB_LLM_MODEL",
+            "BUSYLAB_LLM_ENDPOINT",
+        ):
+            monkeypatch.setenv(name, values.get(name, ""))
+
+    def test_groq_when_only_groq_is_configured(self, monkeypatch):
+        self._env(monkeypatch, GROQ_API_KEY="gsk_x")
+        assert from_env().name == "groq"
+
+    def test_openrouter_when_only_openrouter_is_configured(self, monkeypatch):
+        self._env(monkeypatch, OPENROUTER_API_KEY="sk-or-x")
+        provider = from_env()
+        assert provider.name == "openrouter"
+        assert "openrouter.ai" in provider.endpoint
+
+    def test_openrouter_wins_when_both_are_present(self, monkeypatch):
+        self._env(monkeypatch, GROQ_API_KEY="gsk_x", OPENROUTER_API_KEY="sk-or-x")
+        assert from_env().name == "openrouter"
+
+    def test_groq_can_be_demanded_explicitly(self, monkeypatch):
+        self._env(
+            monkeypatch,
+            GROQ_API_KEY="gsk_x",
+            OPENROUTER_API_KEY="sk-or-x",
+            BUSYLAB_LLM_PROVIDER="groq",
+        )
+        assert from_env().name == "groq"
+
+    def test_nothing_configured_means_no_provider(self, monkeypatch):
+        self._env(monkeypatch)
+        assert not from_env().available()
+
+    def test_off_beats_every_key(self, monkeypatch):
+        self._env(
+            monkeypatch,
+            GROQ_API_KEY="gsk_x",
+            OPENROUTER_API_KEY="sk-or-x",
+            BUSYLAB_LLM_PROVIDER="none",
+        )
+        assert not from_env().available()
+
+    def test_a_router_model_id_is_honoured(self, monkeypatch):
+        self._env(
+            monkeypatch,
+            OPENROUTER_API_KEY="sk-or-x",
+            BUSYLAB_LLM_MODEL="qwen/qwen-2.5-72b-instruct",
+        )
+        assert from_env().model == "qwen/qwen-2.5-72b-instruct"
+
+    def test_a_leftover_groq_model_id_is_not_sent_to_openrouter(self, monkeypatch):
+        """The trap when switching provider without changing the model name.
+
+        OpenRouter ids are always vendor/model. A bare name is a Groq id left in
+        .env from before the switch, and sending it returns a 404 for a model
+        that plainly exists somewhere else.
+        """
+        self._env(
+            monkeypatch,
+            OPENROUTER_API_KEY="sk-or-x",
+            BUSYLAB_LLM_MODEL="llama-3.3-70b-versatile",
+        )
+        assert "/" in from_env().model
+
+    def test_the_endpoint_can_be_overridden(self, monkeypatch):
+        self._env(
+            monkeypatch,
+            OPENROUTER_API_KEY="sk-or-x",
+            BUSYLAB_LLM_ENDPOINT="https://example.test/v1/chat/completions",
+        )
+        assert from_env().endpoint == "https://example.test/v1/chat/completions"
+
+    def test_an_empty_provider_setting_means_auto(self, monkeypatch):
+        """A blank value is "not set", not "an unknown provider".
+
+        Left as a literal empty string it matched no branch and returned the
+        null provider, so a .env line reading BUSYLAB_LLM_PROVIDER= switched the
+        model off with a perfectly good key sitting beside it.
+        """
+        self._env(monkeypatch, GROQ_API_KEY="gsk_x", BUSYLAB_LLM_PROVIDER="")
+        assert from_env().name == "groq"
+
+    def test_whitespace_is_not_a_provider_either(self, monkeypatch):
+        self._env(monkeypatch, GROQ_API_KEY="gsk_x", BUSYLAB_LLM_PROVIDER="   ")
+        assert from_env().name == "groq"

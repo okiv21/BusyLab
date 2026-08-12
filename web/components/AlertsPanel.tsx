@@ -11,7 +11,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { acknowledgeAlert, getDigest, listAlerts, sendDigest } from "@/lib/api";
+import {
+  acknowledgeAlert,
+  getDigest,
+  listAlerts,
+  sendDigest,
+  setDigestRecipient,
+} from "@/lib/api";
 import type { Alert, DigestDelivery,
   DigestPreview } from "@/lib/types";
 
@@ -227,8 +233,29 @@ function DigestDeliveryBar({
 }) {
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<string | null>(null);
+  const [address, setAddress] = useState(delivery?.recipient ?? "");
+  const [saved, setSaved] = useState(delivery?.recipient ?? "");
+  const [saving, setSaving] = useState(false);
 
   if (!delivery) return null;
+
+  const save = async () => {
+    setSaving(true);
+    setResult(null);
+    try {
+      await setDigestRecipient(datasetId, address.trim());
+      setSaved(address.trim());
+      setResult(
+        address.trim()
+          ? `Saved. The digest will go to ${address.trim()}.`
+          : "Cleared. Nothing will be sent."
+      );
+    } catch (err) {
+      setResult(err instanceof Error ? err.message : "Could not save that.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const send = async () => {
     setSending(true);
@@ -257,15 +284,16 @@ function DigestDeliveryBar({
       }}
     >
       <div style={{ flex: "1 1 260px", lineHeight: 1.55 }}>
-        {delivery.recipient ? (
+        {saved ? (
           <>
-            Goes to <strong>{delivery.recipient}</strong>
-            {delivery.is_fallback && " (the fallback address)"} · {delivery.schedule}
+            Goes to <strong>{saved}</strong>
+            {delivery.is_fallback && saved === delivery.recipient
+              ? " (the fallback address)"
+              : ""}{" "}
+            · {delivery.schedule}
           </>
         ) : (
-          <>
-            No address is set for this data yet, so nothing is being sent.
-          </>
+          <>No address is set for this data yet, so nothing is being sent.</>
         )}
         {!delivery.can_send && (
           <div style={{ marginTop: 4, color: "var(--ink-light)" }}>
@@ -275,16 +303,41 @@ function DigestDeliveryBar({
         )}
       </div>
 
-      {delivery.recipient && (
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <input
+          type="email"
+          value={address}
+          onChange={(e) => setAddress(e.target.value)}
+          placeholder="you@example.com"
+          aria-label="Where this digest is sent"
+          style={{
+            padding: "8px 12px",
+            borderRadius: "var(--radius-pill)",
+            border: "1px solid var(--line)",
+            fontSize: 13,
+            fontFamily: "inherit",
+            minWidth: 190,
+          }}
+        />
         <button
-          onClick={send}
-          disabled={sending}
+          onClick={save}
+          disabled={saving || address.trim() === saved}
           className="btn btn-ghost"
           style={{ fontSize: 13, padding: "8px 14px" }}
         >
-          {sending ? "Sending…" : "Send it to me now"}
+          {saving ? "Saving…" : saved ? "Update" : "Save"}
         </button>
-      )}
+        {saved && (
+          <button
+            onClick={send}
+            disabled={sending}
+            className="btn btn-ghost"
+            style={{ fontSize: 13, padding: "8px 14px" }}
+          >
+            {sending ? "Sending…" : "Send it to me now"}
+          </button>
+        )}
+      </div>
 
       {result && (
         <div style={{ flexBasis: "100%", fontSize: 12.5, color: "var(--ink-light)" }}>
