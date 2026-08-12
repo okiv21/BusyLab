@@ -10,25 +10,73 @@ Sector agnostic - telecom, restaurants, clothing brands, online stores, any
 business with structured sales data, but selective about input: properly
 structured tabular data only.
 
+<p align="center">
+  <img src="docs/images/landing.png" alt="The BusyLab landing page" width="100%">
+</p>
+
+<p align="center">
+  <em>Python and FastAPI · Next.js and TypeScript · Postgres · pandas, SciPy,
+  statsmodels · around 960 tests</em>
+</p>
+
+---
+
+## What it looks like
+
+**Reading the file.** A clean file is understood and asks nothing. A messy one
+is asked only about its own mess, and a layout seen before is remembered.
+
+<p align="center">
+  <img src="docs/images/columns.png" alt="Column detection confirming every role automatically" width="100%">
+</p>
+
+**The story.** Findings ranked by how much they matter, each with a chart chosen
+from the shape of the finding rather than from preference, and its evidence
+available on demand.
+
+<p align="center">
+  <img src="docs/images/story.png" alt="A decomposition finding in board view, with per-product contributions" width="100%">
+</p>
+
+The chart above is worth a note, because it is the most common finding in the
+product and it used to be unreadable. It was a running-balance waterfall, so the
+opening and closing totals shared a scale with the individual changes: on a
+business turning over 25m with products moving by 500k, every change collapsed to
+the minimum bar height and eight contributions rendered as eight identical
+dashes. Rescaling the changes against their own axis would have been a dual-axis
+chart, which invents a relationship between two scales, so the totals became the
+caption and the changes got the whole plot.
+
 ### What makes it different
 
-**Insights, not directives.** BusyLab never says "remove this product" or
-"raise the price". It surfaces true, evidenced findings and leaves the decision
-entirely with the business owner. This is both respectful and strategic:
-directive AI carries liability, illuminating AI is trusted. The rule is
-enforced mechanically - a finding that reads as advice fails the test suite.
+**Findings state what is true; suggestions are kept separate and labelled.** A
+finding never says "remove this product" or "raise the price". It reports an
+evidenced fact and stops, and that rule is enforced mechanically: a finding that
+reads as advice fails the test suite.
+
+Suggestions are a second thing, added because reporting only what is true and
+never what it might mean turned out to be genuinely unhelpful to a reader
+without a business background. They appear in their own block, visually cooler
+than a finding, and a caution renders from the same component with no code path
+that shows one without the other. It says plainly that the section is a model
+reading the numbers rather than something BusyLab calculated, that it can be
+wrong, that it knows nothing about the business beyond the file, and that it is
+a starting point rather than grounds for a decision. The number guard still
+applies to it, because a wrong figure is wrong wherever it sits.
 
 **Only the non-obvious.** "Product 6 sells the most" is useless; they packed
 the boxes. The value is in what a human cannot see by eyeballing rows: margin
 reality, statistical significance, seasonality-adjusted movement, concentration
 risk, and the decomposition of why a number moved.
 
-**The statistics are real; the model only narrates.** A deterministic engine
-(pandas, statsmodels, scipy) does every computation. The language model's only
-jobs are turning structured findings into English and routing questions to
-pre-built analyses. It never computes, never decides, and never produces a
-number - and it cannot, because both rules are enforced in code. BusyLab runs
-fully without any model configured.
+**The statistics are real; the model only words them.** A deterministic engine
+(pandas, statsmodels, scipy) does every computation. The language model rewords
+findings, routes questions to analyses, and answers questions from findings that
+have already been computed. It never computes, and it cannot produce a number
+that the engine did not calculate, because every figure it writes is checked
+against the computed facts before it reaches the screen. BusyLab runs fully
+without any model configured: the findings and the numbers are identical, only
+the prose is plainer.
 
 ### Three parts
 
@@ -53,7 +101,16 @@ fully without any model configured.
 | 9. Monitoring and alerts | **done** (anomalies, digest, scheduler) |
 | 10. Present mode and exports | **done** |
 | 11. Polish pass | **done** |
-| Deployment | **configured**; needs your accounts |
+| Deployment | **live** on Supabase, Render, Vercel and GitHub Actions, all free tiers |
+
+Added after the build order was finished, from testing against real exports:
+
+| | |
+|---|---|
+| Extra dimensions | Columns outside the thirteen roles are kept as things to group by rather than discarded. A restaurant export has Daypart and Staff, a wholesaler has Sales Rep and Customer Type, and those are routinely the most interesting columns in the file. |
+| Plain language | Every finding carries a separate plain-English explanation of what it means, deliberately with no numbers in it, plus definitions for the jargon that particular summary could not avoid. |
+| Free-text answering | Questions are answered from the computed findings rather than only routed to one, behind six mechanical checks. See below. |
+| Diagnostic tools | `check_db.py`, `check_storage.py` and `check_api.py` verify the database, object storage and the API from outside the deployment. |
 
 ## Getting started
 
@@ -481,9 +538,40 @@ narration sends one small cached call per finding rather than one large batch.
 A free-form question is matched to one of twelve named analyses. The model does
 classification, which small fast models do reliably; it never analyses, which
 they do not. A route it invents is discarded, keyword matching covers the
-no-model case, and an unmatched question is refused with suggestions rather
-than answered with a guess. Chips are only offered when the engine can actually
-answer them.
+no-model case, and chips are only offered when the engine can actually answer
+them.
+
+### Answering, and the six checks on it
+
+Routing alone could only ever hand back a sentence already visible in the story,
+which read as a lookup rather than an answer. So the model now writes a direct
+answer from the computed findings, and six checks run on it. Prose instructions
+do not constrain a model; rejection does.
+
+- **Numbers must come from the findings the answer cited**, not from every fact
+  in the story. Citation is what makes cross-analysis splicing detectable at all.
+- **A causal claim requires a decomposition**, which is the engine's only causal
+  instrument. "X fell because Y" with nothing measuring contribution is the model
+  reasoning rather than the engine attributing.
+- **Direction words must match the sign** of what they describe.
+- **Named things must exist in the data.** Containment counts, so a product
+  recorded as "Senator Set (Men)" may be called "Senator Set".
+- **Weak evidence must be hedged** rather than stated flatly.
+- **Nothing may be answered with no citation**, since there would be nothing to
+  check it against.
+
+Anything failing falls back to the routed behaviour, so the floor of this
+feature is the ceiling of the old one. Every answer carries the finding ids it
+rests on.
+
+One failure mode is worth naming because it survived all six and was found by
+running against a live model. Asked "how are candles doing in Lagos" against a
+clothing shop's findings, the answer was "candles may be doing steadily in Lagos,
+as Lagos appears to have held roughly steady". Every word true, and there are no
+candles in the file: no number is wrong, nothing is claimed to cause anything,
+and the entity check only inspects capitalised names. The sentence asserts
+nothing false, it just lets the question's premise stand. A seventh check now
+fires when the answer itself adopts a term the data does not contain.
 
 ## The web app
 
