@@ -114,6 +114,24 @@ _BY_TYPE: dict[FindingType, str] = {
         "by now, rather than against the target itself. Being behind early is "
         "a different situation from being behind at the end."
     ),
+    FindingType.ELASTICITY: (
+        "This is about how the amount sold moved when the price moved. It is "
+        "worth knowing and it is not proof of cause: a busy season or a "
+        "promotion changes the price and the quantity at the same time, so a "
+        "link here is a thing to look into rather than a lever to pull."
+    ),
+    FindingType.LIFECYCLE: (
+        "This is about products arriving and products going quiet. A product "
+        "that stops selling leaves no row behind, so it never appears in a list "
+        "of what sold - the only way to notice is to look for what used to be "
+        "there and is not."
+    ),
+    FindingType.DISTRIBUTION: (
+        "This is about the spread rather than the average. Averages are pulled "
+        "upwards by a few large sales, so the average can sit well above what a "
+        "typical sale is actually worth, and knowing both tells you what to "
+        "expect from an ordinary one."
+    ),
     FindingType.DATA_QUALITY: (
         "This is about the file rather than the business. It is here because "
         "it affects how much weight the other findings can carry."

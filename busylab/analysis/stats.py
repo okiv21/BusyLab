@@ -113,6 +113,51 @@ def correct_family(results: list[TestResult], alpha: float = ALPHA) -> list[Test
     return [r.with_adjusted(a) for r, a in zip(results, adjusted)]
 
 
+def slope_test(x, y) -> TestResult | None:
+    """Least squares slope of ``y`` against ``x``, with a p-value.
+
+    ``trend_test`` is this against time; this is the general case, for asking how
+    one measured quantity moves with another. Kept separate rather than
+    generalising trend_test, because that function reports its slope per period
+    and in percentage-of-level terms, which are meaningful for time and
+    meaningless for anything else.
+
+    Both series are expected to be prepared by the caller - logged, cleaned,
+    aligned. This does the arithmetic and reports how sure it is, nothing more.
+    """
+    xs = np.asarray(x, dtype=float)
+    ys = np.asarray(y, dtype=float)
+    if xs.size != ys.size or xs.size < MIN_POINTS:
+        return None
+    ok = np.isfinite(xs) & np.isfinite(ys)
+    xs, ys = xs[ok], ys[ok]
+    if xs.size < MIN_POINTS:
+        return None
+    # A flat input has no slope to find, and linregress divides by zero on it.
+    if np.allclose(xs, xs[0]) or np.allclose(ys, ys[0]):
+        return None
+
+    fit = scipy_stats.linregress(xs, ys)
+    if not np.isfinite(fit.pvalue):
+        return None
+
+    df = xs.size - 2
+    ci_low = ci_high = None
+    if df > 0 and fit.stderr is not None and np.isfinite(fit.stderr):
+        margin = float(scipy_stats.t.ppf(0.975, df) * fit.stderr)
+        ci_low, ci_high = float(fit.slope - margin), float(fit.slope + margin)
+
+    return TestResult(
+        method="least squares slope",
+        statistic=float(fit.slope),
+        p_value=float(fit.pvalue),
+        sample_size=int(xs.size),
+        effect=float(fit.rvalue**2),
+        ci_low=ci_low,
+        ci_high=ci_high,
+    )
+
+
 def trend_test(series: pd.Series) -> TestResult | None:
     """Is this series genuinely rising or falling, or just wobbling?
 

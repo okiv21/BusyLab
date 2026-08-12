@@ -24,7 +24,7 @@ from ..goals import Goal
 from ..quality import QualityReport
 from ..quality import check as check_quality
 from ..roles import TIER_SPECS, Tier
-from . import core, customers, forecast, segments
+from . import core, customers, forecast, patterns, segments
 from . import goals as goals_module
 from .dataset import SalesFrame, build
 
@@ -40,6 +40,10 @@ ANALYSES: tuple[Callable[[SalesFrame], list[Finding]], ...] = (
     core.dimension_decomposition,
     core.price_volume_split,
     core.product_ranking,
+    patterns.concentration_classes,
+    patterns.price_response,
+    patterns.lifecycle,
+    patterns.order_spread,
     segments.segmentation,
     segments.product_relationships,
     forecast.revenue_forecast,

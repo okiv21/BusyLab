@@ -16,7 +16,7 @@ structured tabular data only.
 
 <p align="center">
   <em>Python and FastAPI · Next.js and TypeScript · Postgres · pandas, SciPy,
-  statsmodels · around 960 tests</em>
+  statsmodels · over 1,000 tests</em>
 </p>
 
 ---
@@ -233,6 +233,25 @@ Implemented (Pillar 0, the non-obvious layer):
 | `cohort_retention` | Does each month's intake stick? |
 | `basket_analysis` | What gets bought together, beyond chance |
 | `goal_pace` | Will the target be hit, and where does the gap live |
+| `concentration_classes` | How few products the business actually runs on, and how long the tail is |
+| `price_response` | Did charging more sell fewer, and was the trade worth making |
+| `lifecycle` | Which products quietly stopped selling, and which are new |
+| `order_spread` | What a typical order is worth, as opposed to the average |
+
+The last four were added after running the product against real files. The story
+read thin, and the reason was that almost every finding was a comparison of the
+form "the biggest X against the smallest X" - one thing an analyst does among
+many, and the least interesting of them. These four were chosen for the opposite
+quality: each answers a question an owner would actually ask, and none can be
+got at by sorting a column. They also need nothing beyond date, product,
+quantity and price, so they run on the plainest file anyone uploads.
+
+`price_response` is the one that needs care in its wording. It fits a log-log
+slope of units against price within each product, corrects the whole family of
+products together, and reports the slope as a percentage response. It never says
+raising the price will reduce sales, because a season or a promotion moves price
+and volume at the same time. It says fewer sold when the price was higher, and
+leaves cause alone.
 
 ### Decisions worth knowing
 
@@ -659,6 +678,7 @@ busylab/
   roles.py            role vocabulary, tiers, what each role unlocks
   findings.py         Finding contract, chart mapping, non-directive guard
   cleaning.py         value coercion (currency, percents, dates)
+  explain.py          what each finding means, in plain words, no numbers
   loading.py          structural repair, sheet combining
   detection/
     keywords.py       Layer 1
@@ -668,11 +688,15 @@ busylab/
     dataset.py        canonical SalesFrame, profit and revenue derivation
     stats.py          significance, seasonality, FDR correction
     core.py           Pillar 0 analyses
+    patterns.py       concentration classes, price response, lifecycle, spread
     segments.py       segmentation and correlation, both FDR-corrected
+    customers.py      RFM segments, cohort retention, repeat against new
+    forecast.py       ARIMA with mandatory bands
     engine.py         orchestration and story ranking
   narration/
-    provider.py       pluggable LLM, Groq free tier, null by default
+    provider.py       pluggable LLM (OpenRouter, Groq), null by default
     narrate.py        facts to English, with the invented-number guard
+    answer.py         free-form questions, verified against the findings
     routing.py        question to pre-built analysis, plus follow-up chips
   quality.py          the data quality gate
   cli.py              python -m busylab <file> [--ask "..."]
@@ -697,6 +721,7 @@ tests/
   fixtures.py         messy workbooks, planted truths, flat control
   test_detection.py   three-layer detection and the loader
   test_analysis.py    planted truths found, nothing invented on quiet data
+  test_patterns.py    the pattern analyses, each against planted data
   test_narration.py   the two model guardrails
   test_quality.py     the gate
   test_api.py         the flow a UI drives, over HTTP

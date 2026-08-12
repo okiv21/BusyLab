@@ -50,6 +50,9 @@ class FindingType(str, Enum):
     RELATIONSHIP = "relationship"  # products moving together
     BASKET = "basket"  # products bought together in the same order
     GOAL_PACE = "goal_pace"
+    ELASTICITY = "elasticity"  # how volume moved with price
+    LIFECYCLE = "lifecycle"  # products arriving, fading, stopping
+    DISTRIBUTION = "distribution"  # the shape an average hides
     DATA_QUALITY = "data_quality"
 
 
@@ -94,6 +97,10 @@ _CHART_BY_TYPE: dict[FindingType, ChartType] = {
     # question is "which pairings are strongest", which is a sorted bar.
     FindingType.BASKET: ChartType.BAR_HORIZONTAL,
     FindingType.GOAL_PACE: ChartType.PROGRESS_ARC,
+    # Price against units is two measured quantities, which is a scatter.
+    FindingType.ELASTICITY: ChartType.SCATTER,
+    FindingType.LIFECYCLE: ChartType.BAR_HORIZONTAL,
+    FindingType.DISTRIBUTION: ChartType.BAR_HORIZONTAL,
     FindingType.DATA_QUALITY: ChartType.CALLOUT,
 }
 
