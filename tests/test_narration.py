@@ -574,3 +574,74 @@ class TestProviderChoice:
     def test_whitespace_is_not_a_provider_either(self, monkeypatch):
         self._env(monkeypatch, GROQ_API_KEY="gsk_x", BUSYLAB_LLM_PROVIDER="   ")
         assert from_env().name == "groq"
+
+    def test_a_default_router_model_is_chosen(self, monkeypatch):
+        """The default has to be one that works on this product's calls.
+
+        Measured rather than assumed. The candidates were tried on the real
+        answering prompt: the non-reasoning v3.x models all replied with valid
+        JSON in three to six seconds, and deepseek-v4-flash spent 337 tokens
+        reasoning against a 300 token budget and returned nothing at all.
+        """
+        self._env(monkeypatch, OPENROUTER_API_KEY="sk-or-x")
+        model = from_env().model
+        assert "/" in model
+        # Not a reasoning model: those spend the token budget thinking.
+        assert "r1" not in model.split("/")[-1]
+        assert "flash" not in model
+
+
+class TestEmptyContent:
+    """A model that returns no content must fall back, not crash.
+
+    Reasoning models spend completion tokens thinking before they write, and
+    that thinking counts against max_tokens. Given a tight budget one returns a
+    null content, which used to raise AttributeError on .strip() and surface as
+    a 500 instead of the engine's own wording.
+    """
+
+    def _provider_returning(self, monkeypatch, message: dict):
+        def fake_urlopen(request, timeout=None):
+            class _R:
+                status = 200
+
+                def read(self):
+                    return json.dumps({"choices": [{"message": message}]}).encode()
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *exc):
+                    return False
+
+            return _R()
+
+        monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+        return GroqProvider(api_key="k", max_retries=0)
+
+    def test_null_content_raises_a_provider_error(self, monkeypatch):
+        provider = self._provider_returning(
+            monkeypatch, {"content": None, "reasoning": "thinking out loud"}
+        )
+        with pytest.raises(ProviderError) as caught:
+            provider.complete("s", "u")
+        assert "no content" in str(caught.value)
+
+    def test_the_reason_names_the_reasoning(self, monkeypatch):
+        provider = self._provider_returning(
+            monkeypatch, {"content": "", "reasoning": "I should answer OK"}
+        )
+        with pytest.raises(ProviderError) as caught:
+            provider.complete("s", "u")
+        assert "reasoning" in str(caught.value)
+
+    def test_ordinary_content_still_works(self, monkeypatch):
+        provider = self._provider_returning(monkeypatch, {"content": "  hello  "})
+        assert provider.complete("s", "u") == "hello"
+
+    def test_narration_falls_back_rather_than_failing(self, monkeypatch, finding):
+        # The point of raising cleanly: the caller already knows what to do.
+        provider = self._provider_returning(monkeypatch, {"content": None})
+        result = narrate(finding, provider)
+        assert result.source == "engine"
+        assert result.text == finding.summary

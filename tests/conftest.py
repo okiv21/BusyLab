@@ -31,5 +31,12 @@ def _no_outside_world(monkeypatch: pytest.MonkeyPatch) -> None:
     to the log. So the suite tests the code and not the machine it runs on.
     """
     monkeypatch.setenv("BUSYLAB_LLM_PROVIDER", "none")
-    monkeypatch.setenv("GROQ_API_KEY", "")
     monkeypatch.setenv("BUSYLAB_MAILER", "log")
+
+    # Every key, not just the one that existed when this was written. Adding
+    # OpenRouter broke two tests that empty GROQ_API_KEY and then delete
+    # BUSYLAB_LLM_PROVIDER, because the second key was still being read from
+    # .env and happily supplied a provider. Any new backend needs its key
+    # added here, or the suite starts depending on the machine again.
+    for key in ("GROQ_API_KEY", "OPENROUTER_API_KEY", "BUSYLAB_LLM_ENDPOINT"):
+        monkeypatch.setenv(key, "")

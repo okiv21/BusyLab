@@ -37,9 +37,18 @@ USER_AGENT = "busylab/0.1 (+https://github.com/okiv21/BusyLab)"
 #: free tier offers, without another dependency or another code path.
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
-#: A capable open-weight default. Overridden with BUSYLAB_LLM_MODEL, which is
-#: the point of routing through OpenRouter at all.
-DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-chat"
+#: A capable open-weight default, picked by trying the candidates on this
+#: product's own prompts. Overridden with BUSYLAB_LLM_MODEL, which is the point
+#: of routing through OpenRouter at all.
+#:
+#: Deliberately not a reasoning model. Those spend completion tokens thinking
+#: before they write, and that thinking counts against max_tokens: asked for an
+#: answer in 300 tokens, deepseek-v4-flash spent 337 reasoning and returned
+#: nothing at all. The calls here are wording and classification, which need no
+#: deliberation, so a reasoning model costs more, waits longer and sometimes
+#: produces no output. Measured: v3.2 answers in about 4 seconds for roughly
+#: $0.0006, with no reasoning tokens.
+DEFAULT_OPENROUTER_MODEL = "deepseek/deepseek-v3.2"
 
 #: Prose quality matters here and the calls are cached, so volume stays low.
 DEFAULT_NARRATION_MODEL = "llama-3.3-70b-versatile"
@@ -161,7 +170,25 @@ class GroqProvider:
             try:
                 with urllib.request.urlopen(request, timeout=self.timeout) as response:
                     body = json.loads(response.read().decode("utf-8"))
-                return body["choices"][0]["message"]["content"].strip()
+                message = body["choices"][0]["message"]
+                content = message.get("content")
+                if not content:
+                    # A reasoning model spends completion tokens on thinking
+                    # before it writes anything, and that thinking counts
+                    # against max_tokens. Given a tight budget it returns a
+                    # null content with the whole allowance consumed - which
+                    # used to raise AttributeError on .strip() and surface as a
+                    # 500 rather than falling back to the engine's own wording.
+                    reasoned = (message.get("reasoning") or "").strip()
+                    raise ProviderError(
+                        "the model returned no content"
+                        + (
+                            f"; it spent the token budget reasoning ({reasoned[:60]}...)"
+                            if reasoned
+                            else ""
+                        )
+                    )
+                return content.strip()
             except urllib.error.HTTPError as exc:
                 # Read the body. The status alone said "403 Forbidden", which
                 # reads as a rejected key; the body said "error code: 1010",
